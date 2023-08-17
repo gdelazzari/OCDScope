@@ -1,0 +1,9 @@
+[package]
+name = "ocdscope"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cpp_demangle = "0.4.2"
+elf = "0.7.2"
+libui = "0.2.0"
