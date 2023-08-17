@@ -1,17 +1,19 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 use elf::endian::LittleEndian;
-use libui::controls::{Area, Button, Entry, HorizontalBox, Label, Spacer, Table, VerticalBox};
-use libui::prelude::*;
 
+use eframe::egui;
+
+mod fakesampler;
 mod gdbremote;
 mod memsampler;
-mod scope;
+mod sampler;
 mod signal;
 
-use memsampler::MemSampler;
+use fakesampler::FakeSampler;
+use sampler::Sampler;
 
 fn open_elf(path: PathBuf) {
     println!("Opening ELF file {:?}", path);
@@ -38,157 +40,227 @@ fn open_elf(path: PathBuf) {
     }
 }
 
-fn main() {
-    let current_sampler: Arc<Mutex<Option<(MemSampler, thread::JoinHandle<()>)>>> =
-        Arc::new(Mutex::new(None));
+#[derive(Debug, PartialEq, Eq)]
+enum SamplingMethod {
+    MemorySamping,
+    RTT,
+    Simulated,
+}
 
-    let ui = UI::init().expect("Couldn't initialize UI library");
+enum PlotCommand {
+    Reset,
+    SetAutoFollow(bool),
+}
 
-    let mut win = Window::new(&ui.clone(), "OCDScope", 400, 400, WindowType::NoMenubar);
+struct OCDScope {
+    show_connect_dialog: bool,
 
-    // controls
-    let (scope_handle, scope_area) = scope::new();
-    let mut button_open = Button::new("Open ELF...");
-    let label_file = Label::new("<no file>");
-    let mut button_connect = Button::new("Connect...");
-    let label_connection = Label::new("<not connected>");
+    plot_auto_follow: bool,
 
-    /*
-    let (sampler, sampled_rx) = MemSampler::start("127.0.0.1:3333", 0x2000001c, 1000.0);
+    current_sampler: Option<Box<dyn Sampler>>,
+    samples: Vec<[f64; 2]>,
+    max_time: f64,
 
-    thread::spawn(move || loop {
-        let value = sampled_rx.recv().expect("Failed to .recv() sample value");
-        scope_handle.lock().unwrap().add_values(&[value]);
-    });
-    */
+    sampling_method: SamplingMethod,
+    gdb_address: String,
+    sample_rate_string: String,
+}
 
-    /*
-    let sine = (0..1000)
-        .map(|i| {
-            let t = i as f64 / 1000.0 * 30.0;
-            t.sin() * 50.0
-        })
-        .collect::<Vec<_>>();
-
-    scope_handle.lock().unwrap().add_values(&values);
-    */
-
-    button_open.on_clicked({
-        let win = win.clone();
-        let mut label_file = label_file.clone();
-        move |_| {
-            let maybe_path = win.open_file();
-            if let Some(path) = maybe_path {
-                label_file.set_text(path.file_name().unwrap().to_str().unwrap());
-                open_elf(path);
-            }
+impl OCDScope {
+    pub fn new() -> OCDScope {
+        OCDScope {
+            show_connect_dialog: true,
+            plot_auto_follow: false,
+            current_sampler: None,
+            samples: Vec::new(),
+            max_time: 0.0,
+            sampling_method: SamplingMethod::Simulated,
+            gdb_address: "127.0.0.1:3333".into(),
+            sample_rate_string: "1000.0".into(),
         }
-    });
+    }
 
-    button_connect.on_clicked({
-        let ui = ui.clone();
-        let mut parent_button_connect = button_connect.clone();
-        let mut parent_label_connection = label_connection.clone();
-        let scope_handle = scope_handle.clone();
-        let current_sampler = current_sampler.clone();
+    fn reset_buffer(&mut self) {
+        self.samples.clear();
+        self.max_time = 0.0;
+    }
+}
 
-        move |_| {
-            if current_sampler.lock().unwrap().is_none() {
-                let mut dialog =
-                    Window::new(&ui, "Connection settings", 360, 240, WindowType::NoMenubar);
+impl eframe::App for OCDScope {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if let Some(sampler) = &self.current_sampler {
+            while let Ok((t, y)) = sampler.sampled_channel().try_recv() {
+                self.samples.push([t, y]);
+                if t > self.max_time {
+                    self.max_time = t;
+                }
+            }
+            // TODO: might use `request_repaint_after` to reduce CPU usage
+            ctx.request_repaint();
+        }
 
-                let label_address = Label::new("OpenOCD GDB server address: ");
-                let mut entry_address = Entry::new();
-                entry_address.set_value("127.0.0.1:3333");
-                let label_rate = Label::new("Sampling rate [Hz]: ");
-                let mut entry_rate = Entry::new();
-                entry_rate.set_value("1000.0");
-                let mut button_cancel = Button::new("Cancel");
-                let mut button_connect = Button::new("Connect");
+        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            if self.show_connect_dialog {
+                ui.set_enabled(false);
+            }
 
-                button_cancel.on_clicked({
-                    let mut dialog = dialog.clone();
-                    move |_| {
-                        dialog.hide();
-                        // TODO: memory leak here, not destroying dialog
+            ui.heading("OCDScope");
+            ui.group(|toolbar_group| {
+                toolbar_group.horizontal(|toolbar| {
+                    if toolbar.button("Open ELF").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            println!("Picked file {}", path.display());
+                        }
+                    }
+
+                    if self.current_sampler.is_none() {
+                        if toolbar.button("Connect...").clicked() {
+                            self.show_connect_dialog = true;
+                        }
+                    } else {
+                        if toolbar.button("Disconnect").clicked() {
+                            let sampler = self.current_sampler.take().unwrap();
+                            drop(sampler);
+                            // Sampler::stop(*sampler);
+                            self.current_sampler = None;
+                        }
                     }
                 });
+            });
+        });
 
-                button_connect.on_clicked({
-                    let mut dialog = dialog.clone();
-                    let entry_address = entry_address.clone();
-                    let entry_rate = entry_rate.clone();
-                    let mut parent_button_connect = parent_button_connect.clone();
-                    let mut parent_label_connection = parent_label_connection.clone();
-                    let scope_handle = scope_handle.clone();
-                    let current_sampler = current_sampler.clone();
+        let maybe_plot_command = egui::panel::SidePanel::left("sidebar")
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.label("Controls");
+                let maybe_plot_command = ui
+                    .group(|ui| {
+                        let reset_plot = ui.button("Reset plot").clicked();
+                        ui.checkbox(&mut self.plot_auto_follow, "Auto follow");
 
-                    move |_| {
-                        let address = entry_address.value();
-                        let rate = entry_rate
-                            .value()
-                            .parse::<f64>()
-                            .expect("Failed to parse rate as f64");
+                        if reset_plot {
+                            Some(PlotCommand::Reset)
+                        } else {
+                            None
+                        }
+                    })
+                    .inner;
+                ui.spacing();
+                ui.label("Signals");
 
-                        let (sampler, sampled_rx) =
-                            MemSampler::start(address.clone(), 0x2000001c, rate);
+                maybe_plot_command
+            })
+            .inner;
 
-                        let scope_handle = scope_handle.clone();
-                        let join_handle = thread::spawn(move || loop {
-                            match sampled_rx.recv() {
-                                Ok(value) => scope_handle.lock().unwrap().add_values(&[value]),
-                                Err(_) => break,
+        egui::CentralPanel::default()
+            .show(ctx, |ui| {
+
+                let mut plot = egui::plot::Plot::new("main")
+                    .legend(egui::plot::Legend::default())
+                    .allow_zoom(egui::plot::AxisBools { x: true, y: false })
+                    .label_formatter(|name, value| {
+                        if !name.is_empty() {
+                            format!("{}\nx: {}\ny: {}", name, value.x, value.y)
+                        } else {
+                            "".to_owned()
+                        }
+                    });
+
+                if let Some(PlotCommand::Reset) = maybe_plot_command {
+                    plot = plot.reset();
+                    self.plot_auto_follow = false;
+                }
+
+                plot.show(ui, |plot_ui| {
+                    plot_ui.line(
+                        egui::plot::Line::new(egui::plot::PlotPoints::from(self.samples.clone()))
+                            .name("curve"),
+                    );
+
+                    if plot_ui.plot_clicked() || plot_ui.plot_secondary_clicked() {
+                        self.plot_auto_follow = false;
+                    }
+
+                    if self.plot_auto_follow {
+                        let x_max = self.max_time;
+                        let x_min = x_max - 10.0;
+                        plot_ui.set_plot_bounds(egui::plot::PlotBounds::from_min_max(
+                            [x_min, -10.0],
+                            [x_max, 10.0],
+                        ))
+                    }
+                });
+            })
+            .inner;
+
+        if self.show_connect_dialog {
+            egui::Window::new("Connection settings")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.radio_value(
+                        &mut self.sampling_method,
+                        SamplingMethod::MemorySamping,
+                        "Memory sampling",
+                    );
+                    ui.radio_value(&mut self.sampling_method, SamplingMethod::RTT, "RTT");
+                    ui.radio_value(
+                        &mut self.sampling_method,
+                        SamplingMethod::Simulated,
+                        "Simulated fake data",
+                    );
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("OpenOCD GDB server address: ");
+                        ui.text_edit_singleline(&mut self.gdb_address);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Sampling rate [Hz]: ");
+                        ui.text_edit_singleline(&mut self.sample_rate_string);
+                    });
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.show_connect_dialog = false;
+                        }
+                        if ui.button("Connect").clicked() {
+                            if let Ok(rate) = self.sample_rate_string.parse::<f64>() {
+                                let sampler: Box<dyn Sampler> = match self.sampling_method {
+                                    SamplingMethod::Simulated => Box::new(FakeSampler::start(rate)),
+                                    _ => unimplemented!(),
+                                };
+
+                                self.reset_buffer();
+                                self.current_sampler = Some(sampler);
+
+                                self.show_connect_dialog = false;
                             }
-                        });
-
-                        *current_sampler.lock().unwrap() = Some((sampler, join_handle));
-                        parent_button_connect.set_text("Disconnect");
-                        parent_label_connection.set_text(&address);
-
-                        dialog.hide();
-                        // TODO: memory leak here, not destroying dialog
-                    }
+                        }
+                    });
                 });
-
-                let mut hbox = HorizontalBox::new();
-                hbox.append(button_cancel, LayoutStrategy::Compact);
-                hbox.append(button_connect, LayoutStrategy::Compact);
-
-                let mut vbox = VerticalBox::new();
-                vbox.append(label_address, LayoutStrategy::Compact);
-                vbox.append(entry_address, LayoutStrategy::Compact);
-                vbox.append(label_rate, LayoutStrategy::Compact);
-                vbox.append(entry_rate, LayoutStrategy::Compact);
-                vbox.append(Spacer::new(), LayoutStrategy::Stretchy);
-                vbox.append(hbox, LayoutStrategy::Compact);
-
-                dialog.set_child(vbox);
-                dialog.show();
-            } else {
-                let (sampler, join_handle) = current_sampler.lock().unwrap().take().unwrap();
-
-                sampler.stop();
-                println!("Join result: {:?}", join_handle.join());
-
-                parent_button_connect.set_text("Connect...");
-                parent_label_connection.set_text("<not connected>");
-            }
         }
-    });
+    }
+}
 
-    // layout
-    let mut vbox = VerticalBox::new();
-    let mut hbox = HorizontalBox::new();
-    hbox.append(button_open, LayoutStrategy::Compact);
-    hbox.append(label_file, LayoutStrategy::Stretchy);
-    hbox.append(button_connect, LayoutStrategy::Compact);
-    hbox.append(label_connection, LayoutStrategy::Stretchy);
-    vbox.append(hbox, LayoutStrategy::Compact);
-    vbox.append(scope_area, LayoutStrategy::Stretchy);
-    win.set_child(vbox);
-    win.show();
+fn main() {
+    let options = eframe::NativeOptions {
+        initial_window_size: Some(egui::vec2(800.0, 600.0)),
+        ..Default::default()
+    };
 
-    ui.main();
+    eframe::run_native(
+        "OCDScope",
+        options,
+        Box::new(|_| {
+            let app = OCDScope::new();
+            Box::new(app)
+        }),
+    )
+    .expect("eframe::run_native error");
 }
 
 /*

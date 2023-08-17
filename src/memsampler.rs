@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::gdbremote::{self, GDBRemote};
+use crate::sampler::Sampler;
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
@@ -16,14 +17,11 @@ enum ThreadCommand {
 pub struct MemSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
+    sampled_rx: mpsc::Receiver<(f64, f64)>,
 }
 
 impl MemSampler {
-    pub fn start<A: ToSocketAddrs>(
-        address: A,
-        memory_address: u32,
-        rate: f64,
-    ) -> (MemSampler, mpsc::Receiver<f64>) {
+    pub fn start<A: ToSocketAddrs>(address: A, memory_address: u32, rate: f64) -> MemSampler {
         let (sampled_tx, sampled_rx) = mpsc::sync_channel(SAMPLE_BUFFER_SIZE);
         let (command_tx, command_rx) = mpsc::channel();
 
@@ -36,12 +34,19 @@ impl MemSampler {
         let sampler = MemSampler {
             join_handle,
             command_tx,
+            sampled_rx,
         };
 
-        (sampler, sampled_rx)
+        sampler
+    }
+}
+
+impl Sampler for MemSampler {
+    fn sampled_channel(&self) -> &mpsc::Receiver<(f64, f64)> {
+        &self.sampled_rx
     }
 
-    pub fn stop(self) {
+    fn stop(self) {
         self.command_tx.send(ThreadCommand::Stop).unwrap();
     }
 }
@@ -50,7 +55,7 @@ fn sampler_thread(
     address: SocketAddr,
     memory_address: u32,
     rate: f64,
-    sampled_tx: mpsc::SyncSender<f64>,
+    sampled_tx: mpsc::SyncSender<(f64, f64)>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
     use std::time::Instant;
@@ -106,10 +111,11 @@ fn sampler_thread(
                 )
                 .expect("Failed to parse response as hex value");
 
+                let timestamp = 0.0;
                 let float = f32::from_le_bytes(integer.to_be_bytes()) * 40.0;
 
                 sampled_tx
-                    .send(float as f64)
+                    .send((timestamp, float as f64))
                     .expect("Failed to send sampled value");
             }
             _ => panic!("Unexpected response to read request"),
