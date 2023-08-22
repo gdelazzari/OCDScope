@@ -57,6 +57,7 @@ struct OCDScope {
     show_connect_dialog: bool,
 
     plot_auto_follow: bool,
+    buffer_auto_truncate: bool,
 
     current_sampler: Option<Box<dyn Sampler>>,
     samples: Vec<[f64; 2]>,
@@ -66,7 +67,10 @@ struct OCDScope {
 
     sampling_method: SamplingMethod,
     gdb_address: String,
+    telnet_address: String,
     sample_rate_string: String,
+    rtt_pooling_rate_string: String,
+    rtt_relative_time: bool,
 }
 
 impl OCDScope {
@@ -74,12 +78,16 @@ impl OCDScope {
         OCDScope {
             show_connect_dialog: true,
             plot_auto_follow: false,
+            buffer_auto_truncate: true,
             current_sampler: None,
             samples: Vec::new(),
             max_time: 0,
             sampling_method: SamplingMethod::Simulated,
             gdb_address: "127.0.0.1:3333".into(),
+            telnet_address: "127.0.0.1:4444".into(),
             sample_rate_string: "1000.0".into(),
+            rtt_pooling_rate_string: "1000.0".into(),
+            rtt_relative_time: false,
             signals: (0..20)
                 .map(|i| (format!("Signal {}", i), i < 8))
                 .collect::<Vec<_>>(),
@@ -137,12 +145,31 @@ impl eframe::App for OCDScope {
 
         let maybe_plot_command = egui::panel::SidePanel::left("sidebar")
             .resizable(true)
+            .default_width(300.0)
             .show(ctx, |ui| {
-                ui.label("Controls");
+                ui.label(egui::RichText::new("Status").strong());
+
+                ui.group(|ui| {
+                    let sample_size = std::mem::size_of::<(u64, f64)>();
+                    ui.label(format!(
+                        "Buffer size: {}",
+                        human_readable_size(self.samples.len() * sample_size)
+                    ));
+                    ui.label(format!(
+                        "Buffer capacity: {}",
+                        human_readable_size(self.samples.capacity() * sample_size)
+                    ));
+                });
+
+                ui.spacing();
+
+                ui.label(egui::RichText::new("Controls").strong());
+
                 let maybe_plot_command = ui
                     .group(|ui| {
                         let reset_plot = ui.button("Reset plot").clicked();
-                        ui.checkbox(&mut self.plot_auto_follow, "Auto follow");
+                        ui.checkbox(&mut self.plot_auto_follow, "Plot auto follow");
+                        ui.checkbox(&mut self.buffer_auto_truncate, "Buffer auto truncate");
 
                         if reset_plot {
                             Some(PlotCommand::Reset)
@@ -154,7 +181,7 @@ impl eframe::App for OCDScope {
 
                 ui.spacing();
 
-                ui.label("Signals");
+                ui.label(egui::RichText::new("Signals").strong());
 
                 egui::ScrollArea::vertical()
                     .max_height(240.0)
@@ -234,14 +261,32 @@ impl eframe::App for OCDScope {
 
                     ui.separator();
 
-                    ui.horizontal(|ui| {
-                        ui.label("OpenOCD GDB server address: ");
-                        ui.text_edit_singleline(&mut self.gdb_address);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Sampling rate [Hz]: ");
-                        ui.text_edit_singleline(&mut self.sample_rate_string);
-                    });
+                    if matches!(self.sampling_method, SamplingMethod::MemorySamping) {
+                        ui.horizontal(|ui| {
+                            ui.label("OpenOCD GDB endpoint: ");
+                            ui.text_edit_singleline(&mut self.gdb_address);
+                        });
+                    }
+                    if matches!(
+                        self.sampling_method,
+                        SamplingMethod::MemorySamping | SamplingMethod::Simulated
+                    ) {
+                        ui.horizontal(|ui| {
+                            ui.label("Sampling rate [Hz]: ");
+                            ui.text_edit_singleline(&mut self.sample_rate_string);
+                        });
+                    }
+                    if matches!(self.sampling_method, SamplingMethod::RTT) {
+                        ui.horizontal(|ui| {
+                            ui.label("OpenOCD Telnet endpoint: ");
+                            ui.text_edit_singleline(&mut self.telnet_address);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Pooling rate [Hz]: ");
+                            ui.text_edit_singleline(&mut self.rtt_pooling_rate_string);
+                        });
+                        ui.checkbox(&mut self.rtt_relative_time, "Relative timestamp");
+                    }
 
                     ui.separator();
 
@@ -300,6 +345,20 @@ fn main() {
         }),
     )
     .expect("eframe::run_native error");
+}
+
+fn human_readable_size(size: usize) -> String {
+    const T: usize = 2048;
+
+    if size < T {
+        format!("{} B", size)
+    } else if (size / 1024) < T {
+        format!("{} KiB", size / 1024)
+    } else if (size / 1024 / 1024) < T {
+        format!("{} MiB", size / 1024 / 1024)
+    } else {
+        format!("{} GiB", size / 1024 / 1024 / 1024)
+    }
 }
 
 /*
