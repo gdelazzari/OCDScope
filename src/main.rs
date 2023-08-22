@@ -59,7 +59,8 @@ struct OCDScope {
 
     current_sampler: Option<Box<dyn Sampler>>,
     samples: Vec<[f64; 2]>,
-    max_time: f64,
+
+    signals: Vec<(String, bool)>,
 
     sampling_method: SamplingMethod,
     gdb_address: String,
@@ -77,6 +78,9 @@ impl OCDScope {
             sampling_method: SamplingMethod::Simulated,
             gdb_address: "127.0.0.1:3333".into(),
             sample_rate_string: "1000.0".into(),
+            signals: (0..20)
+                .map(|i| (format!("Signal {}", i), i < 8))
+                .collect::<Vec<_>>(),
         }
     }
 
@@ -145,8 +149,25 @@ impl eframe::App for OCDScope {
                         }
                     })
                     .inner;
+
                 ui.spacing();
+
                 ui.label("Signals");
+
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for (name, enable) in self.signals.iter_mut() {
+                            ui.horizontal(|item| {
+                                item.checkbox(enable, "");
+                                let id = name.clone();
+                                egui::TextEdit::singleline(name)
+                                    .id(egui::Id::new(id))
+                                    .desired_width(100.0)
+                                    .show(item);
+                            });
+                        }
+                    });
 
                 maybe_plot_command
             })
