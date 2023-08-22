@@ -265,6 +265,15 @@ impl eframe::App for OCDScope {
                                 };
 
                                 self.reset_buffer();
+
+                                // we expect that there is currently no sampler active, we assert
+                                // this in debug mode and try to fix the incident in release mode
+                                debug_assert!(self.current_sampler.is_none());
+                                if let Some(sampler) = self.current_sampler.take() {
+                                    sampler.stop();
+                                    // TODO: report and log this event as a warning
+                                }
+
                                 self.current_sampler = Some(sampler);
 
                                 self.show_connect_dialog = false;
