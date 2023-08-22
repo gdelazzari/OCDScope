@@ -252,6 +252,14 @@ impl eframe::App for OCDScope {
                             if let Ok(rate) = self.sample_rate_string.parse::<f64>() {
                                 let sampler: Box<dyn Sampler> = match self.sampling_method {
                                     SamplingMethod::Simulated => Box::new(FakeSampler::start(rate)),
+                                    SamplingMethod::MemorySamping => {
+                                        let memory_address: u32 = 0x2000001c;
+                                        Box::new(MemSampler::start(
+                                            &self.gdb_address,
+                                            memory_address,
+                                            rate,
+                                        ))
+                                    }
                                     _ => unimplemented!(),
                                 };
 
