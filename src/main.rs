@@ -205,7 +205,7 @@ impl eframe::App for OCDScope {
 
                     if self.plot_auto_follow {
                         let x_max = self.max_time as f64 * 1e-6;
-                        let x_min = x_max as f64 * 1e-6 - 1.0;
+                        let x_min = x_max - 1.0;
                         plot_ui.set_plot_bounds(egui::plot::PlotBounds::from_min_max(
                             [x_min, -10.0],
                             [x_max, 10.0],
