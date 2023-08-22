@@ -120,9 +120,9 @@ impl eframe::App for OCDScope {
                     } else {
                         if toolbar.button("Disconnect").clicked() {
                             let sampler = self.current_sampler.take().unwrap();
-                            drop(sampler);
-                            // Sampler::stop(*sampler);
-                            self.current_sampler = None;
+                            sampler.stop();
+
+                            debug_assert!(self.current_sampler.is_none());
                         }
                     }
                 });

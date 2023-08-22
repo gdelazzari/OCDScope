@@ -36,8 +36,9 @@ impl Sampler for FakeSampler {
         &self.sampled_rx
     }
 
-    fn stop(self) {
+    fn stop(self: Box<Self>) {
         self.command_tx.send(ThreadCommand::Stop).unwrap();
+        self.join_handle.join().unwrap();
     }
 }
 
