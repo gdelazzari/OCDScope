@@ -5,13 +5,14 @@ use crate::sampler::Sampler;
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
 enum ThreadCommand {
+    SetActiveSignals(Vec<u32>),
     Stop,
 }
 
 pub struct FakeSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
-    sampled_rx: mpsc::Receiver<(u64, f64)>,
+    sampled_rx: mpsc::Receiver<(u64, Vec<f64>)>,
 }
 
 impl FakeSampler {
@@ -29,10 +30,38 @@ impl FakeSampler {
 
         sampler
     }
+
+    fn clear_rx_channel(&self) {
+        loop {
+            match self.sampled_rx.try_recv() {
+                Ok(_) => {}
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    panic!("RX channel disconnected while clearing")
+                }
+            }
+        }
+    }
 }
 
 impl Sampler for FakeSampler {
-    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, f64)> {
+    fn available_signals(&self) -> Vec<(u32, String)> {
+        vec![
+            (0, "Low freq. sine".into()),
+            (1, "Medium freq. sine".into()),
+            (2, "High freq. sine".into()),
+        ]
+    }
+
+    fn set_active_signals(&self, ids: &[u32]) {
+        self.command_tx
+            .send(ThreadCommand::SetActiveSignals(ids.to_vec()))
+            .unwrap();
+
+        self.clear_rx_channel();
+    }
+
+    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, Vec<f64>)> {
         &self.sampled_rx
     }
 
@@ -44,14 +73,17 @@ impl Sampler for FakeSampler {
 
 fn sampler_thread(
     rate: f64,
-    sampled_tx: mpsc::SyncSender<(u64, f64)>,
+    sampled_tx: mpsc::SyncSender<(u64, Vec<f64>)>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
     use std::time::Instant;
 
     let period = Duration::from_secs_f64(1.0 / rate);
     let mut t = 10.0;
-    let omega = 1.0;
+    let omega0 = 1.0 * std::f64::consts::FRAC_2_PI;
+    let omega1 = 10.0 * std::f64::consts::FRAC_2_PI;
+    let omega2 = 100.0 * std::f64::consts::FRAC_2_PI;
+    let mut active_ids = Vec::new();
 
     let mut last_sampled_at = Instant::now();
     loop {
@@ -59,6 +91,10 @@ fn sampler_thread(
         match command_rx.try_recv() {
             Ok(ThreadCommand::Stop) => {
                 break;
+            }
+            Ok(ThreadCommand::SetActiveSignals(ids)) => {
+                // TODO: validate before setting?
+                active_ids = ids;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => panic!("Thread command channel closed TX end"),
@@ -74,10 +110,20 @@ fn sampler_thread(
         // 3. sample
         t += period.as_secs_f64();
 
-        let y = (t * omega).sin();
+        let y0 = (t * omega0).sin();
+        let y1 = (t * omega1).sin();
+        let y2 = (t * omega2).sin();
+        let ys = [y0, y1, y2];
 
-        sampled_tx
-            .send(((t * 1e6) as u64, y))
-            .expect("Failed to send sampled value");
+        if active_ids.len() > 0 {
+            let active_ys = active_ids
+                .iter()
+                .map(|id| ys[*id as usize])
+                .collect::<Vec<_>>();
+
+            sampled_tx
+                .send(((t * 1e6) as u64, active_ys))
+                .expect("Failed to send sampled values");
+        }
     }
 }

@@ -13,14 +13,6 @@ fn build_gdb_packet(data: &str) -> Vec<u8> {
     result.push(b'#');
     result.extend_from_slice(format!("{:02x}", checksum).as_bytes());
 
-    /*
-    println!(
-        "Built packet {:?} ({})",
-        result,
-        String::from_utf8(result.clone()).unwrap()
-    );
-    */
-
     result
 }
 

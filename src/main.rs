@@ -1,6 +1,5 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
 
 use elf::endian::LittleEndian;
 
@@ -55,32 +54,37 @@ enum PlotCommand {
 
 struct OCDScope {
     show_connect_dialog: bool,
+    show_add_address_dialog: bool,
 
     plot_auto_follow: bool,
     buffer_auto_truncate: bool,
 
+    sampling_method: SamplingMethod,
     current_sampler: Option<Box<dyn Sampler>>,
-    samples: Vec<[f64; 2]>,
+    signals: Vec<(u32, String, bool)>,
+    active_signal_ids: Vec<u32>,
+    samples: HashMap<u32, Vec<[f64; 2]>>,
     max_time: u64,
 
-    signals: Vec<(String, bool)>,
-
-    sampling_method: SamplingMethod,
     gdb_address: String,
     telnet_address: String,
     sample_rate_string: String,
     rtt_pooling_rate_string: String,
     rtt_relative_time: bool,
+
+    memory_address_to_add_string: String,
 }
 
 impl OCDScope {
     pub fn new() -> OCDScope {
         OCDScope {
             show_connect_dialog: true,
+            show_add_address_dialog: false,
             plot_auto_follow: false,
             buffer_auto_truncate: true,
             current_sampler: None,
-            samples: Vec::new(),
+            samples: HashMap::new(),
+            active_signal_ids: Vec::new(),
             max_time: 0,
             sampling_method: SamplingMethod::Simulated,
             gdb_address: "127.0.0.1:3333".into(),
@@ -88,9 +92,8 @@ impl OCDScope {
             sample_rate_string: "1000.0".into(),
             rtt_pooling_rate_string: "1000.0".into(),
             rtt_relative_time: false,
-            signals: (0..20)
-                .map(|i| (format!("Signal {}", i), i < 8))
-                .collect::<Vec<_>>(),
+            signals: Vec::new(),
+            memory_address_to_add_string: "BEEF1010".into(),
         }
     }
 
@@ -98,15 +101,39 @@ impl OCDScope {
         self.samples.clear();
         self.max_time = 0;
     }
+
+    fn any_dialog_visible(&self) -> bool {
+        self.show_add_address_dialog || self.show_connect_dialog
+    }
+
+    fn close_all_dialogs(&mut self) {
+        self.show_add_address_dialog = false;
+        self.show_connect_dialog = false;
+    }
 }
 
 impl eframe::App for OCDScope {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if let Some(sampler) = &self.current_sampler {
-            while let Ok((t, y)) = sampler.sampled_channel().try_recv() {
-                self.samples.push([t as f64 * 1e-6, y]);
-                if t > self.max_time {
-                    self.max_time = t;
+            while let Ok((t, ys)) = sampler.sampled_channel().try_recv() {
+                // TODO/FIXME: something weird happens here, and after changing the active
+                //             signals we receive a sample with the old number of signals;
+                //             investigate and fix this, then re-enable the assert below
+                //debug_assert_eq!(self.active_signal_ids.len(), ys.len());
+
+                if self.active_signal_ids.len() == ys.len() {
+                    for (id, y) in self.active_signal_ids.iter().zip(ys.into_iter()) {
+                        self.samples
+                            .entry(*id)
+                            .or_default()
+                            .push([t as f64 * 1e-6, y]);
+                    }
+
+                    if t > self.max_time {
+                        self.max_time = t;
+                    }
+                } else {
+                    // TODO: show/log a warning
                 }
             }
             // TODO: might use `request_repaint_after` to reduce CPU usage
@@ -114,7 +141,7 @@ impl eframe::App for OCDScope {
         }
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            if self.show_connect_dialog {
+            if self.any_dialog_visible() {
                 ui.set_enabled(false);
             }
 
@@ -150,14 +177,21 @@ impl eframe::App for OCDScope {
                 ui.label(egui::RichText::new("Status").strong());
 
                 ui.group(|ui| {
-                    let sample_size = std::mem::size_of::<(u64, f64)>();
+                    let sample_size = std::mem::size_of::<[f64; 2]>();
                     ui.label(format!(
                         "Buffer size: {}",
-                        human_readable_size(self.samples.len() * sample_size)
+                        human_readable_size(
+                            self.samples.values().map(|ys| ys.len() * sample_size).sum()
+                        )
                     ));
                     ui.label(format!(
                         "Buffer capacity: {}",
-                        human_readable_size(self.samples.capacity() * sample_size)
+                        human_readable_size(
+                            self.samples
+                                .values()
+                                .map(|ys| ys.capacity() * sample_size)
+                                .sum()
+                        )
                     ));
                 });
 
@@ -183,12 +217,13 @@ impl eframe::App for OCDScope {
 
                 ui.label(egui::RichText::new("Signals").strong());
 
+                let mut some_enable_changed = false;
                 egui::ScrollArea::vertical()
-                    .max_height(240.0)
+                    .max_height(120.0)
                     .show(ui, |ui| {
-                        for (name, enable) in self.signals.iter_mut() {
+                        for (_, name, enable) in self.signals.iter_mut() {
                             ui.horizontal(|item| {
-                                item.checkbox(enable, "");
+                                some_enable_changed |= item.checkbox(enable, "").changed();
                                 let id = name.clone();
                                 egui::TextEdit::singleline(name)
                                     .id(egui::Id::new(id))
@@ -197,6 +232,25 @@ impl eframe::App for OCDScope {
                             });
                         }
                     });
+
+                if matches!(self.sampling_method, SamplingMethod::MemorySamping) {
+                    if ui.button("Add memory address").clicked() {
+                        self.show_add_address_dialog = true;
+                    }
+                }
+
+                if some_enable_changed {
+                    if let Some(sampler) = &self.current_sampler {
+                        let active_ids = self
+                            .signals
+                            .iter()
+                            .filter_map(|&(id, _, enabled)| if enabled { Some(id) } else { None })
+                            .collect::<Vec<_>>();
+
+                        sampler.set_active_signals(&active_ids);
+                        self.active_signal_ids = active_ids;
+                    }
+                }
 
                 maybe_plot_command
             })
@@ -221,10 +275,20 @@ impl eframe::App for OCDScope {
                 }
 
                 plot.show(ui, |plot_ui| {
-                    plot_ui.line(
-                        egui::plot::Line::new(egui::plot::PlotPoints::from(self.samples.clone()))
-                            .name("curve"),
-                    );
+                    for (id, name) in self.signals.iter().filter_map(|(id, name, enabled)| {
+                        if *enabled {
+                            Some((*id, name.clone()))
+                        } else {
+                            None
+                        }
+                    }) {
+                        if let Some(points) = self.samples.get(&id) {
+                            plot_ui.line(
+                                egui::plot::Line::new(egui::plot::PlotPoints::from(points.clone()))
+                                    .name(name),
+                            );
+                        }
+                    }
 
                     if plot_ui.plot_clicked() || plot_ui.plot_secondary_clicked() {
                         self.plot_auto_follow = false;
@@ -241,6 +305,35 @@ impl eframe::App for OCDScope {
                 });
             })
             .inner;
+
+        if self.show_add_address_dialog {
+            egui::Window::new("Add memory address")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Hex address: ");
+                        ui.text_edit_singleline(&mut self.memory_address_to_add_string);
+                    });
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.show_add_address_dialog = false;
+                        }
+                        if ui.button("Add").clicked() {
+                            if let Ok(address) =
+                                u32::from_str_radix(&self.memory_address_to_add_string, 16)
+                            {
+                                self.signals
+                                    .push((address, format!("0x{:08x}", address), false));
+                                self.show_add_address_dialog = false;
+                            }
+                        }
+                    });
+                });
+        }
 
         if self.show_connect_dialog {
             egui::Window::new("Connection settings")
@@ -299,12 +392,7 @@ impl eframe::App for OCDScope {
                                 let sampler: Box<dyn Sampler> = match self.sampling_method {
                                     SamplingMethod::Simulated => Box::new(FakeSampler::start(rate)),
                                     SamplingMethod::MemorySamping => {
-                                        let memory_address: u32 = 0x2000001c;
-                                        Box::new(MemSampler::start(
-                                            &self.gdb_address,
-                                            memory_address,
-                                            rate,
-                                        ))
+                                        Box::new(MemSampler::start(&self.gdb_address, rate))
                                     }
                                     _ => unimplemented!(),
                                 };
@@ -318,6 +406,12 @@ impl eframe::App for OCDScope {
                                     sampler.stop();
                                     // TODO: report and log this event as a warning
                                 }
+
+                                self.signals = sampler
+                                    .available_signals()
+                                    .into_iter()
+                                    .map(|(id, name)| (id, name, false))
+                                    .collect();
 
                                 self.current_sampler = Some(sampler);
 

@@ -11,25 +11,25 @@ use crate::sampler::Sampler;
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
 enum ThreadCommand {
+    SetActiveAddresses(Vec<u32>),
     Stop,
 }
 
 pub struct MemSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
-    sampled_rx: mpsc::Receiver<(u64, f64)>,
+    sampled_rx: mpsc::Receiver<(u64, Vec<f64>)>,
 }
 
 impl MemSampler {
-    pub fn start<A: ToSocketAddrs>(address: A, memory_address: u32, rate: f64) -> MemSampler {
+    pub fn start<A: ToSocketAddrs>(address: A, rate: f64) -> MemSampler {
         let (sampled_tx, sampled_rx) = mpsc::sync_channel(SAMPLE_BUFFER_SIZE);
         let (command_tx, command_rx) = mpsc::channel();
 
         let address = address.to_socket_addrs().unwrap().next().unwrap();
 
-        let join_handle = thread::spawn(move || {
-            sampler_thread(address, memory_address, rate, sampled_tx, command_rx)
-        });
+        let join_handle =
+            thread::spawn(move || sampler_thread(address, rate, sampled_tx, command_rx));
 
         let sampler = MemSampler {
             join_handle,
@@ -39,10 +39,37 @@ impl MemSampler {
 
         sampler
     }
+
+    fn clear_rx_channel(&self) {
+        loop {
+            match self.sampled_rx.try_recv() {
+                Ok(_) => {}
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    panic!("RX channel disconnected while clearing")
+                }
+            }
+        }
+    }
 }
 
 impl Sampler for MemSampler {
-    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, f64)> {
+    fn available_signals(&self) -> Vec<(u32, String)> {
+        // TODO: figure out how to implement this; do we make MemSampler parse the ELF file
+        // and return its valid symbols? Or do we just return nothing, maybe unreachable!()
+        // here, and let the GUI handle the special case?
+        vec![(0x2000001c, "Test signal".into())]
+    }
+
+    fn set_active_signals(&self, ids: &[u32]) {
+        self.command_tx
+            .send(ThreadCommand::SetActiveAddresses(ids.to_vec()))
+            .unwrap();
+
+        self.clear_rx_channel();
+    }
+
+    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, Vec<f64>)> {
         &self.sampled_rx
     }
 
@@ -54,16 +81,15 @@ impl Sampler for MemSampler {
 
 fn sampler_thread(
     address: SocketAddr,
-    memory_address: u32,
     rate: f64,
-    sampled_tx: mpsc::SyncSender<(u64, f64)>,
+    sampled_tx: mpsc::SyncSender<(u64, Vec<f64>)>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
     use std::time::Instant;
 
     let mut gdb = GDBRemote::connect(address);
 
-    const DEBUG_PRINT: bool = false;
+    const DEBUG_PRINT: bool = true;
 
     if !gdb.read_response().is_ack() {
         panic!("Expected initial ACK");
@@ -79,15 +105,21 @@ fn sampler_thread(
 
     gdb.send_packet("c");
 
+    let mut active_memory_addresses = Vec::new();
+
     let period = Duration::from_secs_f64(1.0 / rate);
 
     let mut last_sampled_at = Instant::now();
     let start = Instant::now();
-    loop {
+    'outer: loop {
         // 1. process commands, if any
         match command_rx.try_recv() {
             Ok(ThreadCommand::Stop) => {
                 break;
+            }
+            Ok(ThreadCommand::SetActiveAddresses(memory_addresses)) => {
+                // TODO: validate before setting, if we can even do that?
+                active_memory_addresses = memory_addresses;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => panic!("Thread command channel closed TX end"),
@@ -110,38 +142,63 @@ fn sampler_thread(
         }
 
         // 3. sample
-        // TODO: find where it's better to acquire the timestamp of this sample:
-        // - before sending request
-        // - between sending request and waiting response
-        // - after receiving response
-        // we might use some reference signal (like a sine wave) we can compute the
-        // distortion of, and choose the option that minimizes such metric
+        // TODOs:
+        // + find where it's better to acquire the timestamp of the samples:
+        //   - before sending request
+        //   - between sending request and waiting response
+        //   - after receiving response
+        //   we might use some reference signal (like a sine wave) we can compute the
+        //   distortion of, and choose the option that minimizes such metric;
+        // + reason about the best way to sample multiple signals, in particular by considering
+        //   that the sampling rate is fixed at the beginning
+        //   - can send all requests at once and wait for all responses, should improve timing
+        //   - can interleave samples ("chop"?), but then what values do we send for the other
+        //     signals we didn't read?
+        //   - can "chop" and just return the value we sampled if the interface allows for this
+        if active_memory_addresses.len() == 0 {
+            continue;
+        }
+
         let sampled_at = Instant::now();
-        gdb.send_packet(&format!("m {:08x},4", memory_address));
-        let response = gdb.read_response(); // TODO: timeout
+        let mut ys = vec![f64::NAN; active_memory_addresses.len()];
+        for (i, &memory_address) in active_memory_addresses.iter().enumerate() {
+            gdb.send_packet(&format!("m {:08x},4", memory_address));
 
-        match &response {
-            gdbremote::Response::Packet(hex_string) => {
-                let integer = u32::from_str_radix(
-                    &String::from_utf8(hex_string.to_vec())
-                        .expect("Failed to parse response payload as string"),
-                    16,
-                )
-                .expect("Failed to parse response as hex value");
+            // TODO: timeout
+            let response = gdb.read_response();
 
-                // TODO: conversion from u128 to u64 could fail
-                let timestamp = (sampled_at - start).as_micros() as u64;
-                let float = f32::from_le_bytes(integer.to_be_bytes()) * 1.0;
-
-                sampled_tx
-                    .send((timestamp, float as f64))
-                    .expect("Failed to send sampled value");
+            if DEBUG_PRINT {
+                println!("{:?} : {:?}", response, response.to_string());
             }
-            _ => panic!("Unexpected response to read request"),
+
+            match &response {
+                gdbremote::Response::Packet(hex_string) => {
+                    match u32::from_str_radix(
+                        &String::from_utf8(hex_string.to_vec())
+                            .expect("Failed to parse response payload as string"),
+                        16,
+                    ) {
+                        Ok(integer) => ys[i] = f32::from_le_bytes(integer.to_be_bytes()) as f64,
+                        Err(err) => {
+                            // TODO/FIXME: something weird is going on here, when we change the
+                            //             active signals; investigate this, and change the error
+                            //             below so that in debug we fail and in release we log a warning
+                            println!(
+                                "Failed to parse response {:?} as hex value ({:?})",
+                                hex_string, err
+                            );
+                            continue 'outer;
+                        }
+                    }
+                }
+                _ => panic!("Unexpected response to read request"),
+            }
         }
 
-        if DEBUG_PRINT {
-            println!("{:?} : {:?}", response, response.to_string());
-        }
+        // TODO: conversion from u128 to u64 could fail
+        let timestamp = (sampled_at - start).as_micros() as u64;
+        sampled_tx
+            .send((timestamp, ys))
+            .expect("Failed to send sampled value");
     }
 }
