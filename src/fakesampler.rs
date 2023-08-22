@@ -11,7 +11,7 @@ enum ThreadCommand {
 pub struct FakeSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
-    sampled_rx: mpsc::Receiver<(f64, f64)>,
+    sampled_rx: mpsc::Receiver<(u64, f64)>,
 }
 
 impl FakeSampler {
@@ -32,7 +32,7 @@ impl FakeSampler {
 }
 
 impl Sampler for FakeSampler {
-    fn sampled_channel(&self) -> &mpsc::Receiver<(f64, f64)> {
+    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, f64)> {
         &self.sampled_rx
     }
 
@@ -44,7 +44,7 @@ impl Sampler for FakeSampler {
 
 fn sampler_thread(
     rate: f64,
-    sampled_tx: mpsc::SyncSender<(f64, f64)>,
+    sampled_tx: mpsc::SyncSender<(u64, f64)>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
     use std::time::Instant;
@@ -77,7 +77,7 @@ fn sampler_thread(
         let y = (t * omega).sin();
 
         sampled_tx
-            .send((t, y))
+            .send(((t * 1e6) as u64, y))
             .expect("Failed to send sampled value");
     }
 }

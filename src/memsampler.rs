@@ -17,7 +17,7 @@ enum ThreadCommand {
 pub struct MemSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
-    sampled_rx: mpsc::Receiver<(f64, f64)>,
+    sampled_rx: mpsc::Receiver<(u64, f64)>,
 }
 
 impl MemSampler {
@@ -42,7 +42,7 @@ impl MemSampler {
 }
 
 impl Sampler for MemSampler {
-    fn sampled_channel(&self) -> &mpsc::Receiver<(f64, f64)> {
+    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, f64)> {
         &self.sampled_rx
     }
 
@@ -56,7 +56,7 @@ fn sampler_thread(
     address: SocketAddr,
     memory_address: u32,
     rate: f64,
-    sampled_tx: mpsc::SyncSender<(f64, f64)>,
+    sampled_tx: mpsc::SyncSender<(u64, f64)>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
     use std::time::Instant;
@@ -82,6 +82,7 @@ fn sampler_thread(
     let period = Duration::from_secs_f64(1.0 / rate);
 
     let mut last_sampled_at = Instant::now();
+    let start = Instant::now();
     loop {
         // 1. process commands, if any
         match command_rx.try_recv() {
@@ -99,7 +100,23 @@ fn sampler_thread(
         }
         last_sampled_at += period;
 
+        let lag = last_sampled_at.elapsed();
+        if lag > period / 2 {
+            println!(
+                "lagging behind by {}us ({}%)",
+                lag.as_micros(),
+                (lag.as_secs_f64() * rate * 100.0).round() as i32
+            );
+        }
+
         // 3. sample
+        // TODO: find where it's better to acquire the timestamp of this sample:
+        // - before sending request
+        // - between sending request and waiting response
+        // - after receiving response
+        // we might use some reference signal (like a sine wave) we can compute the
+        // distortion of, and choose the option that minimizes such metric
+        let sampled_at = Instant::now();
         gdb.send_packet(&format!("m {:08x},4", memory_address));
         let response = gdb.read_response(); // TODO: timeout
 
@@ -112,8 +129,9 @@ fn sampler_thread(
                 )
                 .expect("Failed to parse response as hex value");
 
-                let timestamp = 0.0;
-                let float = f32::from_le_bytes(integer.to_be_bytes()) * 40.0;
+                // TODO: conversion from u128 to u64 could fail
+                let timestamp = (sampled_at - start).as_micros() as u64;
+                let float = f32::from_le_bytes(integer.to_be_bytes()) * 1.0;
 
                 sampled_tx
                     .send((timestamp, float as f64))

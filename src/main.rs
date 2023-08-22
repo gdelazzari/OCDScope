@@ -13,6 +13,7 @@ mod sampler;
 mod signal;
 
 use fakesampler::FakeSampler;
+use memsampler::MemSampler;
 use sampler::Sampler;
 
 fn open_elf(path: PathBuf) {
@@ -59,6 +60,7 @@ struct OCDScope {
 
     current_sampler: Option<Box<dyn Sampler>>,
     samples: Vec<[f64; 2]>,
+    max_time: u64,
 
     signals: Vec<(String, bool)>,
 
@@ -74,7 +76,7 @@ impl OCDScope {
             plot_auto_follow: false,
             current_sampler: None,
             samples: Vec::new(),
-            max_time: 0.0,
+            max_time: 0,
             sampling_method: SamplingMethod::Simulated,
             gdb_address: "127.0.0.1:3333".into(),
             sample_rate_string: "1000.0".into(),
@@ -86,7 +88,7 @@ impl OCDScope {
 
     fn reset_buffer(&mut self) {
         self.samples.clear();
-        self.max_time = 0.0;
+        self.max_time = 0;
     }
 }
 
@@ -94,7 +96,7 @@ impl eframe::App for OCDScope {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if let Some(sampler) = &self.current_sampler {
             while let Ok((t, y)) = sampler.sampled_channel().try_recv() {
-                self.samples.push([t, y]);
+                self.samples.push([t as f64 * 1e-6, y]);
                 if t > self.max_time {
                     self.max_time = t;
                 }
@@ -175,7 +177,6 @@ impl eframe::App for OCDScope {
 
         egui::CentralPanel::default()
             .show(ctx, |ui| {
-
                 let mut plot = egui::plot::Plot::new("main")
                     .legend(egui::plot::Legend::default())
                     .allow_zoom(egui::plot::AxisBools { x: true, y: false })
@@ -203,8 +204,8 @@ impl eframe::App for OCDScope {
                     }
 
                     if self.plot_auto_follow {
-                        let x_max = self.max_time;
-                        let x_min = x_max - 10.0;
+                        let x_max = self.max_time as f64 * 1e-6;
+                        let x_min = x_max as f64 * 1e-6 - 1.0;
                         plot_ui.set_plot_bounds(egui::plot::PlotBounds::from_min_max(
                             [x_min, -10.0],
                             [x_max, 10.0],
