@@ -2,7 +2,7 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     sync::mpsc,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::gdbremote::{self, GDBRemote};
@@ -85,7 +85,8 @@ fn sampler_thread(
     sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
-    use std::time::Instant;
+    // TODO: handle and report errors of various kind, during initial connection
+    // and handshake
 
     let mut gdb = GDBRemote::connect(address);
 
@@ -111,7 +112,7 @@ fn sampler_thread(
 
     let mut last_sampled_at = Instant::now();
     let start = Instant::now();
-    'outer: loop {
+    loop {
         // 1. process commands, if any
         match command_rx.try_recv() {
             Ok(ThreadCommand::Stop) => {
@@ -135,7 +136,7 @@ fn sampler_thread(
         let lag = last_sampled_at.elapsed();
         if lag > period / 2 {
             // TODO: keep track of the frequency of these events, and react appropriately;
-            // some considerations/ideas, to be evaluated: 
+            // some considerations/ideas, to be evaluated:
             // - skip the next sample if we lagged more than 50%/75%
             // - if the frequency of this event is over a given threshold, decrease the sampling
             //   rate; this should be somehow communicated through the sampler interface, but the
@@ -173,39 +174,47 @@ fn sampler_thread(
         let mut samples = Vec::new();
 
         for &memory_address in &active_memory_addresses {
+            // TODO: support different value sizes?
             gdb.send_packet(&format!("m {:08x},4", memory_address));
 
-            // TODO: timeout
-            let response = gdb.read_response();
+            // TODO: handle timeouts
+            loop {
+                let response = gdb.read_response();
 
-            if DEBUG_PRINT {
-                println!("{:?} : {:?}", response, response.to_string());
-            }
+                if DEBUG_PRINT {
+                    println!("{:?} : {:?}", response, response.to_string());
+                }
 
-            match &response {
-                gdbremote::Response::Packet(hex_string) => {
-                    match u32::from_str_radix(
-                        &String::from_utf8(hex_string.to_vec())
-                            .expect("Failed to parse response payload as string"),
-                        16,
-                    ) {
-                        Ok(integer) => samples.push((
+                match response {
+                    // OpenOCD sends empty 'O' packets during target execution to keep the
+                    // connection alive, we ignore those: everything fine if we get one
+                    // https://github.com/openocd-org/openocd/blob/2e60e2eca9d06dcb99a4adb81ebe435a72ab0c7f/src/server/gdb_server.c#L3748
+                    gdbremote::Response::Packet(data) if data == b"O" => continue,
+                    gdbremote::Response::Packet(data) if parse_hex_value(&data).is_some() => {
+                        let value = parse_hex_value(&data).unwrap();
+                        samples.push((
                             memory_address,
-                            f32::from_le_bytes(integer.to_be_bytes()) as f64,
-                        )),
-                        Err(err) => {
-                            // TODO/FIXME: something weird is going on here, when we change the
-                            //             active signals; investigate this, and change the error
-                            //             below so that in debug we fail and in release we log a warning
+                            f32::from_le_bytes(value.to_be_bytes()) as f64,
+                        ));
+                        break;
+                    }
+                    _ => {
+                        #[cfg(debug_assertions)]
+                        panic!(
+                            "Unexpected/unparsable response to read request: {:?}",
+                            response
+                        );
+                        #[cfg(not(debug_assertions))]
+                        {
+                            // TODO: empty the GDB responses queue, to start fresh, and
+                            // try sampling again at next outer iteration
                             println!(
-                                "Failed to parse response {:?} as hex value ({:?})",
-                                hex_string, err
+                                "Unexpected/unparsable response to read request: {:?}",
+                                response
                             );
-                            continue 'outer;
                         }
                     }
                 }
-                _ => panic!("Unexpected response to read request"),
             }
         }
 
@@ -215,4 +224,10 @@ fn sampler_thread(
             .send((timestamp, samples))
             .expect("Failed to send sampled value");
     }
+}
+
+fn parse_hex_value(data: &[u8]) -> Option<u32> {
+    let data_string = String::from_utf8(data.to_vec()).ok()?;
+    let value = u32::from_str_radix(&data_string, 16).ok()?;
+    Some(value)
 }

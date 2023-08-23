@@ -171,6 +171,9 @@ impl eframe::App for OCDScope {
             });
         });
 
+        // TODO: bringing `maybe_plot_command` out is really ugly
+        // TODO: the sidebar doesn't behave well: can't type on text edit controls,
+        // can't resize smoothly
         let maybe_plot_command = egui::panel::SidePanel::left("sidebar")
             .resizable(true)
             .default_width(300.0)
