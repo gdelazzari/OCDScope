@@ -11,6 +11,9 @@ use crate::sampler::{Sample, Sampler};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
+// TODO:
+// - maximize probe clock
+
 enum ThreadCommand {
     SetActiveAddresses(Vec<u32>),
     Stop,
@@ -107,6 +110,9 @@ impl Sampler for MemSampler {
     }
 
     fn stop(self: Box<Self>) {
+        // TODO: do not panic here if sending fails because the channel is closed;
+        // it __should__ mean that the thread is already terminated. Maybe, check for
+        // this through the `join_handle`.
         self.command_tx.send(ThreadCommand::Stop).unwrap();
         self.join_handle.join().unwrap();
     }

@@ -5,10 +5,12 @@ use eframe::egui;
 mod fakesampler;
 mod gdbremote;
 mod memsampler;
+mod rttsampler;
 mod sampler;
 
 use fakesampler::FakeSampler;
 use memsampler::MemSampler;
+use rttsampler::RTTSampler;
 use sampler::Sampler;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,7 +42,7 @@ struct OCDScope {
     elf_filename: Option<PathBuf>,
     telnet_address: String,
     sample_rate_string: String,
-    rtt_pooling_rate_string: String,
+    rtt_polling_interval_string: String,
     rtt_relative_time: bool,
 
     memory_address_to_add_string: String,
@@ -61,7 +63,7 @@ impl OCDScope {
             elf_filename: None,
             telnet_address: "127.0.0.1:4444".into(),
             sample_rate_string: "1000.0".into(),
-            rtt_pooling_rate_string: "1000.0".into(),
+            rtt_polling_interval_string: "100".into(),
             rtt_relative_time: false,
             signals: Vec::new(),
             memory_address_to_add_string: "BEEF1010".into(),
@@ -361,8 +363,8 @@ impl eframe::App for OCDScope {
                             ui.text_edit_singleline(&mut self.telnet_address);
                         });
                         ui.horizontal(|ui| {
-                            ui.label("Pooling rate [Hz]: ");
-                            ui.text_edit_singleline(&mut self.rtt_pooling_rate_string);
+                            ui.label("Polling interval [ms]: ");
+                            ui.text_edit_singleline(&mut self.rtt_polling_interval_string);
                         });
                         ui.checkbox(&mut self.rtt_relative_time, "Relative timestamp");
                     }
@@ -374,37 +376,45 @@ impl eframe::App for OCDScope {
                             self.show_connect_dialog = false;
                         }
                         if ui.button("Connect").clicked() {
-                            if let Ok(rate) = self.sample_rate_string.parse::<f64>() {
-                                let sampler: Box<dyn Sampler> = match self.sampling_method {
-                                    SamplingMethod::Simulated => Box::new(FakeSampler::start(rate)),
-                                    SamplingMethod::MemorySamping => Box::new(MemSampler::start(
-                                        &self.gdb_address,
-                                        rate,
-                                        self.elf_filename.clone(),
-                                    )),
-                                    _ => unimplemented!(),
-                                };
+                            let sample_rate = self.sample_rate_string.parse::<f64>();
+                            let rtt_polling_interval =
+                                self.rtt_polling_interval_string.parse::<u32>();
 
-                                self.reset_buffer();
+                            // FIXME/TODO: gracefully handle parsing error on sampling rate
+                            let sampler: Box<dyn Sampler> = match self.sampling_method {
+                                SamplingMethod::Simulated => Box::new(FakeSampler::start(
+                                    sample_rate.expect("Failed to parse sample rate"),
+                                )),
+                                SamplingMethod::MemorySamping => Box::new(MemSampler::start(
+                                    &self.gdb_address,
+                                    sample_rate.expect("Failed to parse sample rate"),
+                                    self.elf_filename.clone(),
+                                )),
+                                SamplingMethod::RTT => Box::new(RTTSampler::start(
+                                    &self.telnet_address,
+                                    rtt_polling_interval.expect("Failed to parse polling interval"),
+                                )),
+                            };
 
-                                // we expect that there is currently no sampler active, we assert
-                                // this in debug mode and try to fix the incident in release mode
-                                debug_assert!(self.current_sampler.is_none());
-                                if let Some(sampler) = self.current_sampler.take() {
-                                    sampler.stop();
-                                    // TODO: report and log this event as a warning
-                                }
+                            self.reset_buffer();
 
-                                self.signals = sampler
-                                    .available_signals()
-                                    .into_iter()
-                                    .map(|(id, name)| (id, name, false))
-                                    .collect();
-
-                                self.current_sampler = Some(sampler);
-
-                                self.show_connect_dialog = false;
+                            // we expect that there is currently no sampler active, we assert
+                            // this in debug mode and try to fix the incident in release mode
+                            debug_assert!(self.current_sampler.is_none());
+                            if let Some(previous_sampler) = self.current_sampler.take() {
+                                previous_sampler.stop();
+                                // TODO: report and log this event as a warning
                             }
+
+                            self.signals = sampler
+                                .available_signals()
+                                .into_iter()
+                                .map(|(id, name)| (id, name, false))
+                                .collect();
+
+                            self.current_sampler = Some(sampler);
+
+                            self.show_connect_dialog = false;
                         }
                     });
                 });
@@ -442,6 +452,15 @@ fn human_readable_size(size: usize) -> String {
         format!("{} GiB", size / 1024 / 1024 / 1024)
     }
 }
+
+/*
+resume
+
+rtt setup 0x20000000 2048 "SEGGER RTT"
+rtt start
+
+rtt server start 9090 0
+*/
 
 /*
 fn main_custom_telnet() {
