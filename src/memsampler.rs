@@ -55,7 +55,7 @@ impl MemSampler {
                             return None;
                         }
 
-                        let signal_name = format!("{} ({:08x})", symbol.name, symbol.value as u32);
+                        let signal_name = format!("{} (0x{:08x})", symbol.name, symbol.value as u32);
 
                         Some((symbol.value as u32, signal_name))
                     })
@@ -153,6 +153,7 @@ fn sampler_thread(
             }
             Ok(ThreadCommand::SetActiveAddresses(memory_addresses)) => {
                 // TODO: validate before setting, if we can even do that?
+                // TODO: limit the number of addresses that can be sampled?
                 active_memory_addresses = memory_addresses;
             }
             Err(mpsc::TryRecvError::Empty) => {}
