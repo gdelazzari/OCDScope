@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 
-use elf::endian::LittleEndian;
 
 use eframe::egui;
 
@@ -13,31 +11,6 @@ mod sampler;
 use fakesampler::FakeSampler;
 use memsampler::MemSampler;
 use sampler::Sampler;
-
-fn open_elf(path: PathBuf) {
-    println!("Opening ELF file {:?}", path);
-
-    let file = std::fs::File::open(path).unwrap();
-    let mut elf = elf::ElfStream::<LittleEndian, _>::open_stream(file).unwrap();
-
-    let (symbols, strings) = elf.symbol_table().unwrap().unwrap();
-
-    for symbol in symbols {
-        if symbol.st_size == 0 {
-            continue;
-        }
-        if symbol.st_value < 0x20000000 {
-            continue;
-        }
-
-        let name = strings.get(symbol.st_name as usize).unwrap();
-        let type_ = symbol.st_symtype();
-        let value = symbol.st_value;
-        let size = symbol.st_size;
-
-        println!("{} ({}) = {:08x} (size = {})", name, type_, value, size);
-    }
-}
 
 #[derive(Debug, PartialEq, Eq)]
 enum SamplingMethod {
@@ -66,6 +39,7 @@ struct OCDScope {
     max_time: u64,
 
     gdb_address: String,
+    elf_filename: Option<String>,
     telnet_address: String,
     sample_rate_string: String,
     rtt_pooling_rate_string: String,
@@ -87,6 +61,7 @@ impl OCDScope {
             max_time: 0,
             sampling_method: SamplingMethod::Simulated,
             gdb_address: "127.0.0.1:3333".into(),
+            elf_filename: None,
             telnet_address: "127.0.0.1:4444".into(),
             sample_rate_string: "1000.0".into(),
             rtt_pooling_rate_string: "1000.0".into(),
@@ -120,6 +95,7 @@ impl eframe::App for OCDScope {
                 //             investigate and fix this, then re-enable the assert below
                 //debug_assert_eq!(self.active_signal_ids.len(), ys.len());
 
+                // TODO: remove `active_signal_ids` field
                 if self.active_signal_ids.len() != samples.len() {
                     // TODO: show/log a warning
                 }
@@ -395,7 +371,7 @@ impl eframe::App for OCDScope {
                                 let sampler: Box<dyn Sampler> = match self.sampling_method {
                                     SamplingMethod::Simulated => Box::new(FakeSampler::start(rate)),
                                     SamplingMethod::MemorySamping => {
-                                        Box::new(MemSampler::start(&self.gdb_address, rate))
+                                        Box::new(MemSampler::start(&self.gdb_address, rate, None))
                                     }
                                     _ => unimplemented!(),
                                 };

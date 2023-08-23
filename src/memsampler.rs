@@ -1,5 +1,6 @@
 use std::{
     net::{SocketAddr, ToSocketAddrs},
+    path::PathBuf,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -19,10 +20,15 @@ pub struct MemSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
     sampled_rx: mpsc::Receiver<Sample>,
+    available_elf_symbols: Vec<(u32, String)>,
 }
 
 impl MemSampler {
-    pub fn start<A: ToSocketAddrs>(address: A, rate: f64) -> MemSampler {
+    pub fn start<A: ToSocketAddrs>(
+        address: A,
+        rate: f64,
+        maybe_elf_filename: Option<&str>,
+    ) -> MemSampler {
         let (sampled_tx, sampled_rx) = mpsc::sync_channel(SAMPLE_BUFFER_SIZE);
         let (command_tx, command_rx) = mpsc::channel();
 
@@ -31,10 +37,37 @@ impl MemSampler {
         let join_handle =
             thread::spawn(move || sampler_thread(address, rate, sampled_tx, command_rx));
 
+        let mut available_elf_symbols = Vec::new();
+        if let Some(elf_filename) = maybe_elf_filename {
+            if let Some(parsed_symbols) = parse_elf_symbols(elf_filename.into()) {
+                available_elf_symbols = parsed_symbols
+                    .into_iter()
+                    .filter_map(|symbol| {
+                        use elf::abi::{STT_COMMON, STT_OBJECT, STT_TLS};
+
+                        if symbol.size != 4 {
+                            return None;
+                        }
+                        if ![STT_COMMON, STT_OBJECT, STT_TLS].contains(&symbol.type_) {
+                            return None;
+                        }
+                        if (symbol.value & !0x00000000FFFFFFFF) != 0 {
+                            return None;
+                        }
+
+                        let signal_name = format!("{} ({:08x})", symbol.name, symbol.value as u32);
+
+                        Some((symbol.value as u32, signal_name))
+                    })
+                    .collect();
+            }
+        }
+
         let sampler = MemSampler {
             join_handle,
             command_tx,
             sampled_rx,
+            available_elf_symbols,
         };
 
         sampler
@@ -55,10 +88,7 @@ impl MemSampler {
 
 impl Sampler for MemSampler {
     fn available_signals(&self) -> Vec<(u32, String)> {
-        // TODO: figure out how to implement this; do we make MemSampler parse the ELF file
-        // and return its valid symbols? Or do we just return nothing, maybe unreachable!()
-        // here, and let the GUI handle the special case?
-        vec![(0x2000001c, "Test signal".into())]
+        self.available_elf_symbols.clone()
     }
 
     fn set_active_signals(&self, ids: &[u32]) {
@@ -230,4 +260,38 @@ fn parse_hex_value(data: &[u8]) -> Option<u32> {
     let data_string = String::from_utf8(data.to_vec()).ok()?;
     let value = u32::from_str_radix(&data_string, 16).ok()?;
     Some(value)
+}
+
+struct ParsedELFSymbol {
+    name: String,
+    type_: u8,
+    value: u64,
+    size: u64,
+}
+
+fn parse_elf_symbols(path: PathBuf) -> Option<Vec<ParsedELFSymbol>> {
+    // TODO: propagate errors, maybe use `anyhow`
+
+    use elf::endian::LittleEndian;
+
+    println!("Opening ELF file {:?}", path);
+
+    let file = std::fs::File::open(path).unwrap();
+    let mut elf = elf::ElfStream::<LittleEndian, _>::open_stream(file).unwrap();
+
+    let (symbols, strings) = elf.symbol_table().unwrap().unwrap();
+
+    Some(
+        symbols
+            .into_iter()
+            .filter_map(|symbol| {
+                Some(ParsedELFSymbol {
+                    name: strings.get(symbol.st_name as usize).ok()?.to_owned(),
+                    type_: symbol.st_symtype(),
+                    value: symbol.st_value,
+                    size: symbol.st_size,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
 }
