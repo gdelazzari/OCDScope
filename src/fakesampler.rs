@@ -1,6 +1,6 @@
 use std::{sync::mpsc, thread, time::Duration};
 
-use crate::sampler::Sampler;
+use crate::sampler::{Sample, Sampler};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
@@ -12,7 +12,7 @@ enum ThreadCommand {
 pub struct FakeSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
-    sampled_rx: mpsc::Receiver<(u64, Vec<(u32, f64)>)>,
+    sampled_rx: mpsc::Receiver<Sample>,
 }
 
 impl FakeSampler {
@@ -61,7 +61,7 @@ impl Sampler for FakeSampler {
         self.clear_rx_channel();
     }
 
-    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, Vec<(u32, f64)>)> {
+    fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
         &self.sampled_rx
     }
 
@@ -73,7 +73,7 @@ impl Sampler for FakeSampler {
 
 fn sampler_thread(
     rate: f64,
-    sampled_tx: mpsc::SyncSender<(u64, Vec<(u32, f64)>)>,
+    sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
     use std::time::Instant;

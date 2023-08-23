@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::gdbremote::{self, GDBRemote};
-use crate::sampler::Sampler;
+use crate::sampler::{Sample, Sampler};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
@@ -18,7 +18,7 @@ enum ThreadCommand {
 pub struct MemSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
-    sampled_rx: mpsc::Receiver<(u64, Vec<(u32, f64)>)>,
+    sampled_rx: mpsc::Receiver<Sample>,
 }
 
 impl MemSampler {
@@ -69,7 +69,7 @@ impl Sampler for MemSampler {
         self.clear_rx_channel();
     }
 
-    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, Vec<(u32, f64)>)> {
+    fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
         &self.sampled_rx
     }
 
@@ -82,7 +82,7 @@ impl Sampler for MemSampler {
 fn sampler_thread(
     address: SocketAddr,
     rate: f64,
-    sampled_tx: mpsc::SyncSender<(u64, Vec<(u32, f64)>)>,
+    sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
     use std::time::Instant;
