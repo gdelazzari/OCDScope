@@ -60,6 +60,9 @@ impl MemSampler {
                         Some((symbol.value as u32, signal_name))
                     })
                     .collect();
+            } else {
+                // TODO: better error handling and reporting
+                println!("Failed to parse ELF symbols");
             }
         }
 
