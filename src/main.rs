@@ -33,7 +33,6 @@ struct OCDScope {
     sampling_method: SamplingMethod,
     current_sampler: Option<Box<dyn Sampler>>,
     signals: Vec<(u32, String, bool)>,
-    active_signal_ids: Vec<u32>,
     samples: HashMap<u32, Vec<[f64; 2]>>,
     max_time: u64,
 
@@ -56,7 +55,6 @@ impl OCDScope {
             buffer_auto_truncate: true,
             current_sampler: None,
             samples: HashMap::new(),
-            active_signal_ids: Vec::new(),
             max_time: 0,
             sampling_method: SamplingMethod::Simulated,
             gdb_address: "127.0.0.1:3333".into(),
@@ -94,8 +92,13 @@ impl eframe::App for OCDScope {
                 //             investigate and fix this, then re-enable the assert below
                 //debug_assert_eq!(self.active_signal_ids.len(), ys.len());
 
-                // TODO: remove `active_signal_ids` field
-                if self.active_signal_ids.len() != samples.len() {
+                if self
+                    .signals
+                    .iter()
+                    .filter(|&&(_, _, enabled)| enabled)
+                    .count()
+                    != samples.len()
+                {
                     // TODO: show/log a warning
                 }
 
@@ -220,7 +223,6 @@ impl eframe::App for OCDScope {
                             .collect::<Vec<_>>();
 
                         sampler.set_active_signals(&active_ids);
-                        self.active_signal_ids = active_ids;
                     }
                 }
 
