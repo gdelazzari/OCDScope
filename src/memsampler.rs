@@ -79,6 +79,7 @@ impl MemSampler {
         sampler
     }
 
+    // TODO: I guess this operation is no longer needed
     fn clear_rx_channel(&self) {
         loop {
             match self.sampled_rx.try_recv() {

@@ -1686,6 +1686,7 @@ dependencies = [
  "eframe",
  "elf",
  "rfd",
+ "telnet",
 ]
 
 [[package]]
@@ -2213,6 +2214,12 @@ name = "target-lexicon"
 version = "0.12.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d0e916b1148c8e263850e1ebcbd046f333e0683c724876bb0da63ea4373dc8a"
+
+[[package]]
+name = "telnet"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99f2cc260bea5219955ab4832c9600a41b87101d280939edae6dd10b3c68a4f3"
 
 [[package]]
 name = "tempfile"
