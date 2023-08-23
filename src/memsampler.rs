@@ -134,6 +134,13 @@ fn sampler_thread(
 
         let lag = last_sampled_at.elapsed();
         if lag > period / 2 {
+            // TODO: keep track of the frequency of these events, and react appropriately;
+            // some considerations/ideas, to be evaluated: 
+            // - skip the next sample if we lagged more than 50%/75%
+            // - if the frequency of this event is over a given threshold, decrease the sampling
+            //   rate; this should be somehow communicated through the sampler interface, but the
+            //   details of the interface related to the sampling rate are still to be defined
+            //   (if any)
             println!(
                 "lagging behind by {}us ({}%)",
                 lag.as_micros(),
