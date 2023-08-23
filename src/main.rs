@@ -9,7 +9,6 @@ mod fakesampler;
 mod gdbremote;
 mod memsampler;
 mod sampler;
-mod signal;
 
 use fakesampler::FakeSampler;
 use memsampler::MemSampler;
