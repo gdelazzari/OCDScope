@@ -18,7 +18,7 @@ enum ThreadCommand {
 pub struct MemSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
-    sampled_rx: mpsc::Receiver<(u64, Vec<f64>)>,
+    sampled_rx: mpsc::Receiver<(u64, Vec<(u32, f64)>)>,
 }
 
 impl MemSampler {
@@ -69,7 +69,7 @@ impl Sampler for MemSampler {
         self.clear_rx_channel();
     }
 
-    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, Vec<f64>)> {
+    fn sampled_channel(&self) -> &mpsc::Receiver<(u64, Vec<(u32, f64)>)> {
         &self.sampled_rx
     }
 
@@ -82,14 +82,14 @@ impl Sampler for MemSampler {
 fn sampler_thread(
     address: SocketAddr,
     rate: f64,
-    sampled_tx: mpsc::SyncSender<(u64, Vec<f64>)>,
+    sampled_tx: mpsc::SyncSender<(u64, Vec<(u32, f64)>)>,
     command_rx: mpsc::Receiver<ThreadCommand>,
 ) {
     use std::time::Instant;
 
     let mut gdb = GDBRemote::connect(address);
 
-    const DEBUG_PRINT: bool = true;
+    const DEBUG_PRINT: bool = false;
 
     if !gdb.read_response().is_ack() {
         panic!("Expected initial ACK");
@@ -155,12 +155,16 @@ fn sampler_thread(
         //   - can interleave samples ("chop"?), but then what values do we send for the other
         //     signals we didn't read?
         //   - can "chop" and just return the value we sampled if the interface allows for this
+        // + handle the possibility of the target breaking into some exception handler, calling
+        //   for the debugger, or other events that might happend after issuing a GDB "continue"
+        //   command to the OpenOCD
         if active_memory_addresses.len() == 0 {
             continue;
         }
 
         let sampled_at = Instant::now();
-        let mut ys = vec![f64::NAN; active_memory_addresses.len()];
+        let mut samples = Vec::new();
+
         for (i, &memory_address) in active_memory_addresses.iter().enumerate() {
             gdb.send_packet(&format!("m {:08x},4", memory_address));
 
@@ -178,7 +182,10 @@ fn sampler_thread(
                             .expect("Failed to parse response payload as string"),
                         16,
                     ) {
-                        Ok(integer) => ys[i] = f32::from_le_bytes(integer.to_be_bytes()) as f64,
+                        Ok(integer) => samples.push((
+                            memory_address,
+                            f32::from_le_bytes(integer.to_be_bytes()) as f64,
+                        )),
                         Err(err) => {
                             // TODO/FIXME: something weird is going on here, when we change the
                             //             active signals; investigate this, and change the error
@@ -198,7 +205,7 @@ fn sampler_thread(
         // TODO: conversion from u128 to u64 could fail
         let timestamp = (sampled_at - start).as_micros() as u64;
         sampled_tx
-            .send((timestamp, ys))
+            .send((timestamp, samples))
             .expect("Failed to send sampled value");
     }
 }

@@ -115,27 +115,28 @@ impl OCDScope {
 impl eframe::App for OCDScope {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if let Some(sampler) = &self.current_sampler {
-            while let Ok((t, ys)) = sampler.sampled_channel().try_recv() {
+            while let Ok((t, samples)) = sampler.sampled_channel().try_recv() {
                 // TODO/FIXME: something weird happens here, and after changing the active
                 //             signals we receive a sample with the old number of signals;
                 //             investigate and fix this, then re-enable the assert below
                 //debug_assert_eq!(self.active_signal_ids.len(), ys.len());
 
-                if self.active_signal_ids.len() == ys.len() {
-                    for (id, y) in self.active_signal_ids.iter().zip(ys.into_iter()) {
-                        self.samples
-                            .entry(*id)
-                            .or_default()
-                            .push([t as f64 * 1e-6, y]);
-                    }
-
-                    if t > self.max_time {
-                        self.max_time = t;
-                    }
-                } else {
+                if self.active_signal_ids.len() != samples.len() {
                     // TODO: show/log a warning
                 }
+
+                for (id, y) in samples.into_iter() {
+                    self.samples
+                        .entry(id)
+                        .or_default()
+                        .push([t as f64 * 1e-6, y]);
+                }
+
+                if t > self.max_time {
+                    self.max_time = t;
+                }
             }
+
             // TODO: might use `request_repaint_after` to reduce CPU usage
             ctx.request_repaint();
         }
