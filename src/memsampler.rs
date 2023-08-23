@@ -165,7 +165,7 @@ fn sampler_thread(
         let sampled_at = Instant::now();
         let mut samples = Vec::new();
 
-        for (i, &memory_address) in active_memory_addresses.iter().enumerate() {
+        for &memory_address in &active_memory_addresses {
             gdb.send_packet(&format!("m {:08x},4", memory_address));
 
             // TODO: timeout
