@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use std::{collections::HashMap, path::PathBuf};
 
 use eframe::egui;
 
@@ -39,7 +38,7 @@ struct OCDScope {
     max_time: u64,
 
     gdb_address: String,
-    elf_filename: Option<String>,
+    elf_filename: Option<PathBuf>,
     telnet_address: String,
     sample_rate_string: String,
     rtt_pooling_rate_string: String,
@@ -124,12 +123,6 @@ impl eframe::App for OCDScope {
             ui.heading("OCDScope");
             ui.group(|toolbar_group| {
                 toolbar_group.horizontal(|toolbar| {
-                    if toolbar.button("Open ELF").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            println!("Picked file {}", path.display());
-                        }
-                    }
-
                     if self.current_sampler.is_none() {
                         if toolbar.button("Connect...").clicked() {
                             self.show_connect_dialog = true;
@@ -338,6 +331,18 @@ impl eframe::App for OCDScope {
                             ui.label("OpenOCD GDB endpoint: ");
                             ui.text_edit_singleline(&mut self.gdb_address);
                         });
+                        ui.horizontal(|ui| {
+                            let elf_label_text = match &self.elf_filename {
+                                Some(path) => {
+                                    path.file_name().unwrap().to_string_lossy().to_owned()
+                                }
+                                None => "<no ELF file>".into(),
+                            };
+                            ui.label(elf_label_text);
+                            if ui.button("Open..").clicked() {
+                                self.elf_filename = rfd::FileDialog::new().pick_file();
+                            }
+                        });
                     }
                     if matches!(
                         self.sampling_method,
@@ -370,9 +375,11 @@ impl eframe::App for OCDScope {
                             if let Ok(rate) = self.sample_rate_string.parse::<f64>() {
                                 let sampler: Box<dyn Sampler> = match self.sampling_method {
                                     SamplingMethod::Simulated => Box::new(FakeSampler::start(rate)),
-                                    SamplingMethod::MemorySamping => {
-                                        Box::new(MemSampler::start(&self.gdb_address, rate, None))
-                                    }
+                                    SamplingMethod::MemorySamping => Box::new(MemSampler::start(
+                                        &self.gdb_address,
+                                        rate,
+                                        self.elf_filename.clone(),
+                                    )),
                                     _ => unimplemented!(),
                                 };
 

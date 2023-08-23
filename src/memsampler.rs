@@ -27,7 +27,7 @@ impl MemSampler {
     pub fn start<A: ToSocketAddrs>(
         address: A,
         rate: f64,
-        maybe_elf_filename: Option<&str>,
+        maybe_elf_filename: Option<PathBuf>,
     ) -> MemSampler {
         let (sampled_tx, sampled_rx) = mpsc::sync_channel(SAMPLE_BUFFER_SIZE);
         let (command_tx, command_rx) = mpsc::channel();
@@ -39,7 +39,7 @@ impl MemSampler {
 
         let mut available_elf_symbols = Vec::new();
         if let Some(elf_filename) = maybe_elf_filename {
-            if let Some(parsed_symbols) = parse_elf_symbols(elf_filename.into()) {
+            if let Some(parsed_symbols) = parse_elf_symbols(elf_filename) {
                 available_elf_symbols = parsed_symbols
                     .into_iter()
                     .filter_map(|symbol| {
@@ -265,6 +265,7 @@ fn parse_hex_value(data: &[u8]) -> Option<u32> {
     Some(value)
 }
 
+#[derive(Debug)]
 struct ParsedELFSymbol {
     name: String,
     type_: u8,
