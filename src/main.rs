@@ -234,9 +234,12 @@ impl eframe::App for OCDScope {
 
         egui::CentralPanel::default()
             .show(ctx, |ui| {
-                let mut plot = egui::plot::Plot::new("main")
-                    .legend(egui::plot::Legend::default())
-                    .allow_zoom(egui::plot::AxisBools { x: true, y: false })
+                use egui::plot::{AxisBools, Legend, Line, Plot, PlotBounds, PlotPoints};
+
+                // TODO: handle vertical scale for each signal
+                let mut plot = Plot::new("main")
+                    .legend(Legend::default())
+                    .allow_zoom(AxisBools { x: true, y: false })
                     .label_formatter(|name, value| {
                         if !name.is_empty() {
                             format!("{}\nx: {}\ny: {}", name, value.x, value.y)
@@ -251,18 +254,15 @@ impl eframe::App for OCDScope {
                 }
 
                 plot.show(ui, |plot_ui| {
-                    for (id, name) in self.signals.iter().filter_map(|(id, name, enabled)| {
+                    for (id, name, enabled) in &self.signals {
                         if *enabled {
-                            Some((*id, name.clone()))
-                        } else {
-                            None
-                        }
-                    }) {
-                        if let Some(points) = self.samples.get(&id) {
-                            plot_ui.line(
-                                egui::plot::Line::new(egui::plot::PlotPoints::from(points.clone()))
-                                    .name(name),
-                            );
+                            if let Some(points) = self.samples.get(&id) {
+                                // TODO: try PlotPoints::from_explicit_callback, and see if only asks for the points
+                                // within bounds
+                                let points = PlotPoints::from_iter(points.iter().copied());
+                                let line = Line::new(points).name(name);
+                                plot_ui.line(line);
+                            }
                         }
                     }
 
@@ -273,7 +273,7 @@ impl eframe::App for OCDScope {
                     if self.plot_auto_follow {
                         let x_max = self.max_time as f64 * 1e-6;
                         let x_min = x_max - 1.0;
-                        plot_ui.set_plot_bounds(egui::plot::PlotBounds::from_min_max(
+                        plot_ui.set_plot_bounds(PlotBounds::from_min_max(
                             [x_min, -10.0],
                             [x_max, 10.0],
                         ))
