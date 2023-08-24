@@ -20,6 +20,7 @@ const SAMPLE_BUFFER_SIZE: usize = 1024;
 // - we should handshake and list the channels asynchronously to the main thread,
 //   so we don't block it; but then the Sampler interface should allow for late update of
 //   the available signals and late reporting of errors
+// - factor out Telnet interaction, which might be useful also for other samplers
 
 enum ThreadCommand {
     Stop,
