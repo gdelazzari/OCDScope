@@ -257,10 +257,42 @@ impl eframe::App for OCDScope {
                     for (id, name, enabled) in &self.signals {
                         if *enabled {
                             if let Some(points) = self.samples.get(&id) {
-                                // TODO: try PlotPoints::from_explicit_callback, and see if only asks for the points
-                                // within bounds
-                                let points = PlotPoints::from_iter(points.iter().copied());
-                                let line = Line::new(points).name(name);
+                                // TODO: constructing PlotPoints from an explicit callback makes the Plot widget
+                                // only ask for visible points; figure out how to provide the points in a memory and
+                                // computationally efficient way (some clever data structure might be needed), so that
+                                // we make use of this fact; moreover:
+                                // - try to dynamically adjust the resolution of the plotted signal (`points` parameter)
+                                // - figure out if and how we need to resample the signal, especially if the resolution
+                                //   changes dynamically
+                                // - find a way to handle memory: we might need some `Sync` data structure since the
+                                //   callback must be `'static`
+
+                                /*
+                                let t0 = points[0][0];
+                                let tf = points[points.len() - 1][0];
+                                let count = points.len();
+
+                                let points = points.clone();
+
+                                let plot_points = PlotPoints::from_explicit_callback(
+                                    move |x| {
+                                        // TODO: binary search, or some optimized underlying data structure
+                                        let mut res = points[0][1];
+                                        for &[t, y] in &points {
+                                            res = y;
+                                            if t > x {
+                                                break;
+                                            }
+                                        }
+                                        res
+                                    },
+                                    t0..tf,
+                                    count,
+                                );
+                                */
+
+                                let plot_points = PlotPoints::from(points.clone());
+                                let line = Line::new(plot_points).name(name);
                                 plot_ui.line(line);
                             }
                         }
