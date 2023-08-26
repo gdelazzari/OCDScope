@@ -439,6 +439,11 @@ impl eframe::App for OCDScope {
                                 .map(|(id, name)| (id, name, false))
                                 .collect();
 
+                            if let Some(first) = self.signals.iter_mut().next() {
+                                first.2 = true;
+                                sampler.set_active_signals(&[first.0]);
+                            }
+
                             self.current_sampler = Some(sampler);
 
                             self.show_connect_dialog = false;
