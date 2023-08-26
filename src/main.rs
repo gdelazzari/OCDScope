@@ -2,12 +2,14 @@ use std::{collections::HashMap, path::PathBuf};
 
 use eframe::egui;
 
+mod buffer;
 mod fakesampler;
 mod gdbremote;
 mod memsampler;
 mod rttsampler;
 mod sampler;
 
+use buffer::SampleBuffer;
 use fakesampler::FakeSampler;
 use memsampler::MemSampler;
 use rttsampler::RTTSampler;
@@ -35,7 +37,7 @@ struct OCDScope {
     sampling_method: SamplingMethod,
     current_sampler: Option<Box<dyn Sampler>>,
     signals: Vec<(u32, String, bool)>,
-    samples: HashMap<u32, Vec<[f64; 2]>>,
+    samples: HashMap<u32, SampleBuffer>,
     max_time: u64,
 
     gdb_address: String,
@@ -107,8 +109,8 @@ impl eframe::App for OCDScope {
                 for (id, y) in samples.into_iter() {
                     self.samples
                         .entry(id)
-                        .or_default()
-                        .push([t as f64 * 1e-6, y]);
+                        .or_insert_with(|| SampleBuffer::new())
+                        .push(t as f64 * 1e-6, y);
                 }
 
                 if t > self.max_time {
@@ -154,21 +156,15 @@ impl eframe::App for OCDScope {
                 ui.label(egui::RichText::new("Status").strong());
 
                 ui.group(|ui| {
-                    let sample_size = std::mem::size_of::<[f64; 2]>();
-                    ui.label(format!(
-                        "Buffer size: {}",
-                        human_readable_size(
-                            self.samples.values().map(|ys| ys.len() * sample_size).sum()
-                        )
-                    ));
+                    let (used, capacity) = self.samples.values().fold((0, 0), |(u, c), buffer| {
+                        let (bu, bc) = buffer.memory_footprint();
+                        (u + bu, c + bc)
+                    });
+
+                    ui.label(format!("Buffer size: {}", human_readable_size(used)));
                     ui.label(format!(
                         "Buffer capacity: {}",
-                        human_readable_size(
-                            self.samples
-                                .values()
-                                .map(|ys| ys.capacity() * sample_size)
-                                .sum()
-                        )
+                        human_readable_size(capacity)
                     ));
                 });
 
@@ -256,7 +252,7 @@ impl eframe::App for OCDScope {
                 plot.show(ui, |plot_ui| {
                     for (id, name, enabled) in &self.signals {
                         if *enabled {
-                            if let Some(points) = self.samples.get(&id) {
+                            if let Some(buffer) = self.samples.get(&id) {
                                 // TODO: constructing PlotPoints from an explicit callback makes the Plot widget
                                 // only ask for visible points; figure out how to provide the points in a memory and
                                 // computationally efficient way (some clever data structure might be needed), so that
@@ -291,8 +287,7 @@ impl eframe::App for OCDScope {
                                 );
                                 */
 
-                                let plot_points = PlotPoints::from(points.clone());
-                                let line = Line::new(plot_points).name(name);
+                                let line = Line::new(buffer.plot_points()).name(name);
                                 plot_ui.line(line);
                             }
                         }
