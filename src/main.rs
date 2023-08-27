@@ -287,7 +287,17 @@ impl eframe::App for OCDScope {
                                 );
                                 */
 
-                                let line = Line::new(buffer.plot_points()).name(name);
+                                // TODO: handle the auto follow mode
+                                let bounds = plot_ui.plot_bounds();
+                                let (x_min, x_max) = (bounds.min()[0], bounds.max()[0]);
+                                let width = x_max - x_min;
+                                debug_assert!(width >= 0.0);
+                                let margin = if width == 0.0 { 0.1 } else { width };
+
+                                let line = Line::new(
+                                    buffer.plot_points(x_min - margin / 2.0, x_max + margin / 2.0),
+                                )
+                                .name(name);
                                 plot_ui.line(line);
                             }
                         }
