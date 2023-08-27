@@ -80,7 +80,7 @@ fn sampler_thread(
     use std::time::Instant;
 
     let period = Duration::from_secs_f64(1.0 / rate);
-    let mut t = 10.0;
+    let mut t = 0.0;
     let omega0 = 1.0 * std::f64::consts::FRAC_2_PI;
     let omega1 = 10.0 * std::f64::consts::FRAC_2_PI;
     let omega2 = 100.0 * std::f64::consts::FRAC_2_PI;
