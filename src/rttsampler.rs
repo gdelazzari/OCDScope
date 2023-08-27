@@ -21,6 +21,10 @@ const SAMPLE_BUFFER_SIZE: usize = 1024;
 //   so we don't block it; but then the Sampler interface should allow for late update of
 //   the available signals and late reporting of errors
 // - factor out Telnet interaction, which might be useful also for other samplers
+// - it happened, sometimes, that the target didn't resume after sampling started; find a way to
+//   reproduce and investigate
+// - observed "Error: couldn't bind rtt to socket on port 9090: Address already in use" from OpenOCD
+//   console, may be related to the above
 
 enum ThreadCommand {
     Stop,

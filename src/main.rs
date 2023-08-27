@@ -24,7 +24,6 @@ enum SamplingMethod {
 
 enum PlotCommand {
     Reset,
-    SetAutoFollow(bool),
 }
 
 struct OCDScope {
@@ -88,24 +87,9 @@ impl OCDScope {
 }
 
 impl eframe::App for OCDScope {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if let Some(sampler) = &self.current_sampler {
             while let Ok((t, samples)) = sampler.sampled_channel().try_recv() {
-                // TODO/FIXME: something weird happens here, and after changing the active
-                //             signals we receive a sample with the old number of signals;
-                //             investigate and fix this, then re-enable the assert below
-                //debug_assert_eq!(self.active_signal_ids.len(), ys.len());
-
-                if self
-                    .signals
-                    .iter()
-                    .filter(|&&(_, _, enabled)| enabled)
-                    .count()
-                    != samples.len()
-                {
-                    // TODO: show/log a warning
-                }
-
                 for (id, y) in samples.into_iter() {
                     self.samples
                         .entry(id)
@@ -230,7 +214,7 @@ impl eframe::App for OCDScope {
 
         egui::CentralPanel::default()
             .show(ctx, |ui| {
-                use egui::plot::{AxisBools, Legend, Line, Plot, PlotBounds, PlotPoints};
+                use egui::plot::{AxisBools, Legend, Line, Plot, PlotBounds};
 
                 // TODO: handle vertical scale for each signal
                 let mut plot = Plot::new("main")

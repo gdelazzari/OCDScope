@@ -58,7 +58,8 @@ impl MemSampler {
                             return None;
                         }
 
-                        let signal_name = format!("{} (0x{:08x})", symbol.name, symbol.value as u32);
+                        let signal_name =
+                            format!("{} (0x{:08x})", symbol.name, symbol.value as u32);
 
                         Some((symbol.value as u32, signal_name))
                     })
@@ -78,19 +79,6 @@ impl MemSampler {
 
         sampler
     }
-
-    // TODO: I guess this operation is no longer needed
-    fn clear_rx_channel(&self) {
-        loop {
-            match self.sampled_rx.try_recv() {
-                Ok(_) => {}
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    panic!("RX channel disconnected while clearing")
-                }
-            }
-        }
-    }
 }
 
 impl Sampler for MemSampler {
@@ -102,8 +90,6 @@ impl Sampler for MemSampler {
         self.command_tx
             .send(ThreadCommand::SetActiveAddresses(ids.to_vec()))
             .unwrap();
-
-        self.clear_rx_channel();
     }
 
     fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
