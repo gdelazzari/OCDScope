@@ -280,6 +280,7 @@ impl eframe::App for OCDScope {
 
                                 let line = Line::new(
                                     buffer.plot_points(x_min - margin / 2.0, x_max + margin / 2.0),
+                                    // buffer.plot_points_generator(x_min - margin / 2.0, x_max + margin / 2.0, 1000),
                                 )
                                 .name(name);
                                 plot_ui.line(line);
