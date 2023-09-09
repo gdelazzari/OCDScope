@@ -4,6 +4,7 @@ use eframe::egui;
 
 mod buffer;
 mod fakesampler;
+mod openocd;
 mod gdbremote;
 mod memsampler;
 mod rttsampler;
