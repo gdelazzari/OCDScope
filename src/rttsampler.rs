@@ -145,24 +145,16 @@ fn sampler_thread(
     // TODO: handle and report errors of various kind, during initial connection
     // and handshake
 
-    let mut telnet_connection = Telnet::connect(telnet_address.clone(), 1024).unwrap();
+    let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone()).unwrap();
 
     // TODO:
     // - handle failure of RTT TCP channel opening, which can happen for various
     //   reasons (like address already in use)
     // - ensure, somehow, that the TCP port we're asking is free
     let rtt_channel_tcp_port = 9090;
-    wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
-    telnet_connection
-        .write(
-            format!(
-                "rtt server start {} {}\n",
-                rtt_channel_tcp_port, rtt_channel_id
-            )
-            .as_bytes(),
-        )
-        .expect("Failed to send RTT server start command");
-    // TODO: check response of "rtt server start (..)"
+    openocd
+        .rtt_server_start(rtt_channel_tcp_port, rtt_channel_id)
+        .unwrap();
 
     let rtt_channel_tcp_address = SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::new(127, 0, 0, 1),
@@ -182,13 +174,11 @@ fn sampler_thread(
     // resume; the RTT writes in the ring-buffer are atomic, so this should work
     // TODO: we could design an online auto-sync algorithm to avoid this
     {
-        wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
-        telnet_connection
-            .write(b"halt\n")
-            .expect("Failed to send halt command");
-
-        // TODO: check that the target did indeed halt
-        wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
+        match openocd.halt() {
+            // on timeout, we assume the target is already halted
+            Ok(_) | Err(openocd::TelnetInterfaceError::Timeout) => {}
+            Err(err) => panic!("{}", err),
+        }
 
         // empty the RTT channel
         rtt_channel
@@ -209,10 +199,7 @@ fn sampler_thread(
             }
         }
 
-        wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
-        telnet_connection
-            .write(b"resume\n")
-            .expect("Failed to send resume command");
+        openocd.resume().unwrap();
     }
 
     // TODO: all of this is very temporary and ad-hoc
@@ -275,5 +262,5 @@ fn sampler_thread(
         }
     }
 
-    // TODO: on graceful stop, also issue an "rtt server stop" on the OpenOCD Telnet interface
+    openocd.rtt_server_stop(rtt_channel_tcp_port).unwrap();
 }

@@ -1,3 +1,7 @@
+/*
+    Tested with OpenOCD 0.12.0
+*/
+
 use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 use telnet::{Event, Telnet};
@@ -86,6 +90,11 @@ impl TelnetInterface {
                         String::from_utf8(line.clone())
                     );
 
+                    if line.len() >= 2 && &line[0..2] == &[8, 8] {
+                        println!("TelnetInterface: ignoring line since it begins with [8, 8]");
+                        continue;
+                    }
+
                     return Ok(line);
                 }
             }
@@ -105,16 +114,20 @@ impl TelnetInterface {
         if !predicate(&line) {
             return Err(TelnetInterfaceError::UnexpectedResponse(line));
         } else {
+            println!("TelnetInterface: found line matching predicate");
             return Ok(line);
         }
     }
 
     fn write_command(&mut self, command: &str, timeout_at: Instant) -> Result<()> {
-        let line = format!("{}\r\n", command).as_bytes().to_vec();
+        let line = format!("{}\r\n", command);
+        let buffer = line.as_bytes().to_vec();
 
-        self.connection.write(&line)?;
+        println!("TelnetInterface: writing {}", line);
 
-        self.expect_line_with(timeout_at, |echoed| echoed.ends_with(&line[..]))?;
+        self.connection.write(&buffer)?;
+
+        self.expect_line_with(timeout_at, |echoed| echoed.ends_with(&buffer[..]))?;
 
         Ok(())
     }
@@ -192,6 +205,31 @@ impl TelnetInterface {
         Ok(())
     }
 
+    pub fn rtt_server_start(&mut self, tcp_port: u16, rtt_channel: u32) -> Result<()> {
+        let timeout_at = Instant::now() + self.timeout;
+
+        self.wait_prompt(timeout_at)?;
+
+        self.write_command(
+            &format!("rtt server start {} {}", tcp_port, rtt_channel),
+            timeout_at,
+        )?;
+
+        self.expect_line_with(timeout_at, |line| line.starts_with(b"Listening on port"))?;
+
+        Ok(())
+    }
+
+    pub fn rtt_server_stop(&mut self, tcp_port: u16) -> Result<()> {
+        let timeout_at = Instant::now() + self.timeout;
+
+        self.wait_prompt(timeout_at)?;
+
+        self.write_command(&format!("rtt server stop {}", tcp_port), timeout_at)?;
+
+        Ok(())
+    }
+
     pub fn set_adapter_speed(&mut self, speed: usize) -> Result<usize> {
         let timeout_at = Instant::now() + self.timeout;
 
@@ -233,6 +271,31 @@ impl TelnetInterface {
             &format!("rtt polling_interval {}", milliseconds),
             timeout_at,
         )?;
+
+        Ok(())
+    }
+
+    pub fn halt(&mut self) -> Result<()> {
+        let timeout_at = Instant::now() + self.timeout;
+
+        self.wait_prompt(timeout_at)?;
+
+        self.write_command("halt", timeout_at)?;
+
+        self.expect_line_with(timeout_at, |line| {
+            String::from_utf8(line.to_vec())
+                .map(|line| line.contains("halted due to debug-request"))
+                .unwrap_or(false)
+        })?;
+
+        Ok(())
+    }
+
+    pub fn resume(&mut self) -> Result<()> {
+        let timeout_at = Instant::now() + self.timeout;
+
+        self.wait_prompt(timeout_at)?;
+        self.write_command("resume", timeout_at)?;
 
         Ok(())
     }
