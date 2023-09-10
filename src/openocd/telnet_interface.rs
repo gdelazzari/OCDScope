@@ -17,9 +17,11 @@ pub struct TelnetInterface {
 pub enum TelnetInterfaceError {
     #[error("Telnet IO error: {0:?}")]
     IOError(#[from] std::io::Error),
+    #[error("Telnet protocol error: {0:?}")]
+    TelnetError(#[from] telnet::TelnetError),
     #[error("Timeout error")]
     Timeout,
-    #[error("Unexpected response {0:?}")]
+    #[error("Unexpected response {:?}", String::from_utf8(.0.clone()))]
     UnexpectedResponse(Vec<u8>),
 }
 
@@ -30,7 +32,8 @@ impl TelnetInterface {
 
         let now = Instant::now();
 
-        if timeout_at > now {
+        if timeout_at < now {
+            println!("TelnetInterface: early return due to `timeout_at` in the past");
             return Err(TelnetInterfaceError::Timeout);
         }
 
@@ -39,7 +42,14 @@ impl TelnetInterface {
         match self.connection.read_timeout(timeout) {
             Ok(Event::Data(buffer)) => {
                 let n = buffer.len();
-                self.buffer.append(&mut buffer.to_vec());
+
+                println!("TelnetInterface: read {} bytes: {:?}", n, &buffer[..]);
+
+                // only append bytes different from 0x00, see https://www.rfc-editor.org/rfc/rfc854
+                // at page 10 where 0x00 is NOP for the printer
+                self.buffer
+                    .extend(buffer.iter().copied().filter(|&b| b != 0x00));
+
                 Ok(n)
             }
             Ok(_) => Ok(0),
@@ -48,9 +58,10 @@ impl TelnetInterface {
         }
     }
 
-    fn wait_telnet_prompt(&mut self, timeout_at: Instant) -> Result<()> {
+    fn wait_prompt(&mut self, timeout_at: Instant) -> Result<()> {
         loop {
             if self.buffer.ends_with(b"> ") {
+                println!("TelnetInterface: found prompt, clearing buffer");
                 self.buffer.clear();
                 return Ok(());
             }
@@ -63,13 +74,20 @@ impl TelnetInterface {
     fn read_line(&mut self, timeout_at: Instant) -> Result<Vec<u8>> {
         loop {
             if let Some(i) = self.buffer.iter().position(|&b| b == b'\n') {
-                let previous_len = self.buffer.len();
+                if i >= 1 && &self.buffer[i - 1..i + 1] == b"\r\n" {
+                    let previous_len = self.buffer.len();
 
-                let line = self.buffer.drain(0..i + 1).collect::<Vec<_>>();
+                    let line = self.buffer.drain(0..i + 1).collect::<Vec<_>>();
 
-                debug_assert!(self.buffer.len() == previous_len - line.len());
+                    debug_assert!(self.buffer.len() == previous_len - line.len());
 
-                return Ok(line);
+                    println!(
+                        "TelnetInterface: read line {:?}",
+                        String::from_utf8(line.clone())
+                    );
+
+                    return Ok(line);
+                }
             }
 
             // read more data up to the timeout instant, and keep trying
@@ -90,6 +108,16 @@ impl TelnetInterface {
             return Ok(line);
         }
     }
+
+    fn write_command(&mut self, command: &str, timeout_at: Instant) -> Result<()> {
+        let line = format!("{}\r\n", command).as_bytes().to_vec();
+
+        self.connection.write(&line)?;
+
+        self.expect_line_with(timeout_at, |echoed| echoed.ends_with(&line[..]))?;
+
+        Ok(())
+    }
 }
 
 // Public functions
@@ -99,7 +127,7 @@ impl TelnetInterface {
 
         Ok(TelnetInterface {
             connection,
-            timeout: Duration::from_millis(100),
+            timeout: Duration::from_millis(200),
             buffer: Vec::new(),
         })
     }
@@ -116,23 +144,25 @@ impl TelnetInterface {
     ) -> Result<()> {
         let timeout_at = Instant::now() + self.timeout;
 
-        self.connection.write(
-            format!(
-                "rtt setup {} {} \"{}\"\n",
-                block_search_from, block_search_bytes, block_id
-            )
-            .as_bytes(),
-        )?;
+        self.wait_prompt(timeout_at)?;
 
-        self.wait_telnet_prompt(timeout_at)?;
+        self.write_command(
+            &format!(
+                "rtt setup {} {} \"{}\"",
+                block_search_from, block_search_bytes, block_id
+            ),
+            timeout_at,
+        )?;
 
         Ok(())
     }
 
-    fn rtt_start(&mut self) -> Result<u32> {
+    pub fn rtt_start(&mut self) -> Result<u32> {
         let timeout_at = Instant::now() + self.timeout;
 
-        self.connection.write(b"rtt start\n")?;
+        self.wait_prompt(timeout_at)?;
+
+        self.write_command("rtt start", timeout_at)?;
 
         self.expect_line_with(timeout_at, |line| {
             line.starts_with(b"rtt: Searching for control block")
@@ -144,31 +174,30 @@ impl TelnetInterface {
 
         let block_address = String::from_utf8(line.clone())
             .ok()
-            .and_then(|l| l.strip_suffix('\n').map(str::to_string))
+            .and_then(|l| l.strip_suffix("\r\n").map(str::to_string))
             .and_then(|l| l.split(" 0x").last().map(str::to_string))
             .and_then(|a| u32::from_str_radix(&a, 16).ok())
             .ok_or_else(|| TelnetInterfaceError::UnexpectedResponse(line))?;
 
-        self.wait_telnet_prompt(timeout_at)?;
-
         Ok(block_address)
     }
 
-    fn rtt_stop(&mut self) -> Result<()> {
+    pub fn rtt_stop(&mut self) -> Result<()> {
         let timeout_at = Instant::now() + self.timeout;
 
-        self.connection.write(b"rtt stop\n")?;
+        self.wait_prompt(timeout_at)?;
 
-        self.wait_telnet_prompt(timeout_at)?;
+        self.write_command("rtt stop", timeout_at)?;
 
         Ok(())
     }
 
-    fn set_adapter_speed(&mut self, speed: usize) -> Result<usize> {
+    pub fn set_adapter_speed(&mut self, speed: usize) -> Result<usize> {
         let timeout_at = Instant::now() + self.timeout;
 
-        self.connection
-            .write(format!("adapter speed {}\n", speed).as_bytes())?;
+        self.wait_prompt(timeout_at)?;
+
+        self.write_command(&format!("adapter speed {}", speed), timeout_at)?;
 
         let actual_speed = loop {
             let line = match self
@@ -181,7 +210,7 @@ impl TelnetInterface {
 
             let actual_speed = String::from_utf8(line.clone())
                 .ok()
-                .and_then(|l| l.strip_suffix('\n').map(str::to_string))
+                .and_then(|l| l.strip_suffix("\r\n").map(str::to_string))
                 .and_then(|l| l.split(": ").last().map(str::to_string))
                 .and_then(|s| s.split(" ").next().map(str::to_string))
                 .and_then(|a| usize::from_str_radix(&a, 10).ok())
@@ -190,20 +219,20 @@ impl TelnetInterface {
             break actual_speed;
         };
 
-        self.expect_line_with(timeout_at, |line| line == b"\n")?;
-
-        self.wait_telnet_prompt(timeout_at)?;
+        self.expect_line_with(timeout_at, |line| line == b"\r\n")?;
 
         Ok(actual_speed)
     }
 
-    fn set_rtt_polling_interval(&mut self, milliseconds: u32) -> Result<()> {
+    pub fn set_rtt_polling_interval(&mut self, milliseconds: u32) -> Result<()> {
         let timeout_at = Instant::now() + self.timeout;
 
-        self.connection
-            .write(format!("rtt polling_interval {}\n", milliseconds).as_bytes())?;
+        self.wait_prompt(timeout_at)?;
 
-        self.wait_telnet_prompt(timeout_at)?;
+        self.write_command(
+            &format!("rtt polling_interval {}", milliseconds),
+            timeout_at,
+        )?;
 
         Ok(())
     }
