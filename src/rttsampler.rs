@@ -7,7 +7,10 @@ use std::{
 
 use telnet::{Event, Telnet};
 
-use crate::sampler::{Sample, Sampler};
+use crate::{
+    openocd,
+    sampler::{Sample, Sampler},
+};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
@@ -60,43 +63,25 @@ impl RTTSampler {
         // the protocol, and not checking what's happening, thus not trying to recover
         // unexpected conditions, and not reporting potentially useful errors to the user
 
-        let mut telnet_connection = Telnet::connect(telnet_address.clone(), 1024).unwrap();
+        let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone()).unwrap();
 
         // ensure previously configured RTT servers are stopped
-        wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
-        telnet_connection
-            .write(b"rtt stop\n")
-            .expect("Failed to send RTT stop command");
-        // TODO: check response of stop command?
+        openocd.rtt_stop().unwrap();
+
+        // setup and start RTT
         // TODO: make the following settings configurable
-        wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
-        telnet_connection
-            .write(format!("rtt setup 0x20000000 8192 \"SEGGER RTT\"\n").as_bytes())
-            .expect("Failed to send RTT setup command");
-        wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
-        telnet_connection
-            .write(b"rtt start\n")
-            .expect("Failed to send RTT start command");
-        // FIXME/TODO: check response of setup and start commands: example output of "rtt start":
-        //   rtt: Searching for control block 'SEGGER RTT'
-        //   rtt: Control block found at 0x2000042c
+        openocd.rtt_setup(0x20000000, 8192, "SEGGER RTT").unwrap();
+        let rtt_block_address = openocd.rtt_start().unwrap();
+        println!("Found RTT control block at 0x{:08X}", rtt_block_address);
 
         // ask 1GHz probe clock, to likely obtain the maximum one
-        wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
-        telnet_connection
-            .write(b"adapter speed 1000000\n")
-            .expect("Failed to send RTT adapter speed command");
-        // TODO: check response
+        openocd.set_adapter_speed(1_000_000).unwrap();
 
         // set RTT polling interval
-        wait_telnet_prompt(&mut telnet_connection, Duration::from_millis(100));
-        telnet_connection
-            .write(format!("rtt polling_interval {}\n", polling_interval).as_bytes())
-            .expect("Failed to send RTT polling interval command");
-        // TODO: check response
+        openocd.set_rtt_polling_interval(polling_interval).unwrap();
 
-        // close this Telnet connection since we have finished the RTT setup
-        drop(telnet_connection);
+        // close this OpenOCD interface since we have finished the RTT setup
+        drop(openocd);
 
         // TODO: query list of RTT channels and select an appropriate one
         let rtt_channel_id = 2;
