@@ -29,8 +29,6 @@ impl SampleBuffer {
         let from_i = index_before_at(&self.samples, from_t);
         let to_i = index_before_at(&self.samples, to_t);
 
-        dbg!(from_t, from_i, to_t, to_i);
-
         let len = self.samples.len();
 
         let slice = match (from_i, to_i) {
@@ -127,14 +125,6 @@ fn index_before_at(samples: &[PlotPoint], t: f64) -> Option<usize> {
             a = i;
         }
     }
-
-    /*
-    dbg!(a, b);
-    dbg!(samples[a].x);
-    if b > 0 {
-        dbg!(samples[b - 1].x);
-    }
-    */
 
     if t < samples[a].x {
         None
