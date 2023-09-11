@@ -5,8 +5,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use telnet::{Event, Telnet};
-
 use crate::{
     openocd,
     sampler::{Sample, Sampler},
@@ -38,17 +36,6 @@ pub struct RTTSampler {
     command_tx: mpsc::Sender<ThreadCommand>,
     sampled_rx: mpsc::Receiver<Sample>,
     available_signals: Vec<(u32, String)>,
-}
-
-fn wait_telnet_prompt(connection: &mut Telnet, timeout: Duration) {
-    loop {
-        let event = connection.read_timeout(timeout).expect("Read error");
-        if let Event::Data(buffer) = event {
-            if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"> " {
-                break;
-            }
-        }
-    }
 }
 
 impl RTTSampler {
