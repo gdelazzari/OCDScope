@@ -104,6 +104,11 @@ impl TelnetInterface {
                         String::from_utf8(line.clone())
                     );
 
+                    // two backspaces are sent to erase the prompt '> ', print debug lines, and then
+                    // put the prompt back
+                    // TODO: it is not enough to only ignore the line that starts with [8, 8], but more
+                    // lines should be ignored; figure out how to do this, or try to configure the Telnet
+                    // session so that this information isn't written to us
                     if line.len() >= 2 && &line[0..2] == &[8, 8] {
                         println!("TelnetInterface: ignoring line since it begins with [8, 8]");
                         continue;
