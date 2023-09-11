@@ -29,6 +29,20 @@ pub enum TelnetInterfaceError {
     UnexpectedResponse(Vec<u8>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RTTChannelDirection {
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone)]
+pub struct RTTChannel {
+    pub name: String,
+    pub size: u32,
+    pub flags: u32,
+    pub direction: RTTChannelDirection,
+}
+
 // Private helpers
 impl TelnetInterface {
     fn read_into_buffer(&mut self, timeout_at: Instant) -> Result<usize> {
@@ -205,6 +219,26 @@ impl TelnetInterface {
         Ok(())
     }
 
+    pub fn rtt_channels(&mut self) -> Result<Vec<RTTChannel>> {
+        let timeout_at = Instant::now() + self.timeout;
+
+        self.wait_prompt(timeout_at)?;
+        self.write_command("rtt channellist", timeout_at)?;
+        let line = self.expect_line_with(timeout_at, |line| {
+            line.starts_with(b"{") && line.ends_with(b"}\r\n")
+        })?;
+
+        let parse_input = String::from_utf8(line.clone())
+            .ok()
+            .and_then(|line| line.strip_suffix("\r\n").map(str::to_string))
+            .ok_or_else(|| TelnetInterfaceError::UnexpectedResponse(line.clone()))?;
+
+        let channels = parse_rtt_channels(&parse_input)
+            .ok_or_else(|| TelnetInterfaceError::UnexpectedResponse(line.clone()))?;
+
+        Ok(channels)
+    }
+
     pub fn rtt_server_start(&mut self, tcp_port: u16, rtt_channel: u32) -> Result<()> {
         let timeout_at = Instant::now() + self.timeout;
 
@@ -299,4 +333,89 @@ impl TelnetInterface {
 
         Ok(())
     }
+}
+
+fn parse_rtt_channels(input: &str) -> Option<Vec<RTTChannel>> {
+    // parses something like
+    // {{name Terminal size 1024 flags 0} {name JScope_T4F4F4F4F4 size 4096 flags 0}} {{name Terminal size 16 flags 0}}
+
+    fn parse_rtt_channel(input: &str, direction: RTTChannelDirection) -> Option<RTTChannel> {
+        // parses something like
+        // {name Terminal size 1024 flags 0}
+
+        // TODO: test what we need to parse if the channel name contains spaces
+
+        let inner = input.strip_prefix('{')?.strip_suffix('}')?;
+
+        let mut tokens = inner.split(' ');
+
+        if tokens.next()? != "name" {
+            println!("[error] expected 'name' field");
+            return None;
+        }
+        let name = tokens.next()?.to_string();
+
+        if tokens.next()? != "size" {
+            println!("[error] expected 'size' field");
+            return None;
+        }
+        let size = tokens.next()?.parse::<u32>().ok()?;
+
+        if tokens.next()? != "flags" {
+            println!("[error] expected 'flags' field");
+            return None;
+        }
+        let flags = tokens.next()?.parse::<u32>().ok()?;
+
+        let channel = RTTChannel {
+            name,
+            size,
+            flags,
+            direction,
+        };
+
+        Some(channel)
+    }
+
+    let mut channels = Vec::new();
+
+    let mut begin = 0;
+    let mut level = 0;
+    let mut first_level_block = 0;
+
+    for (i, &c) in input.as_bytes().iter().enumerate() {
+        if c == b'{' {
+            level += 1;
+
+            if level == 2 {
+                begin = i;
+            } else if level > 2 {
+                println!("[error] level > 2");
+                return None;
+            }
+        } else if c == b'}' {
+            level -= 1;
+
+            if level == 1 {
+                let end = i + 1;
+                if end <= begin {
+                    println!("[error] end <= begin");
+                    return None;
+                }
+
+                let substring = &input[begin..end];
+                let direction =
+                    *[RTTChannelDirection::Up, RTTChannelDirection::Down].get(first_level_block)?;
+
+                channels.push(parse_rtt_channel(substring, direction)?);
+            } else if level == 0 {
+                first_level_block += 1;
+            } else if level < 0 {
+                println!("[error] level < 0");
+                return None;
+            }
+        }
+    }
+
+    Some(channels)
 }
