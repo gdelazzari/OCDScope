@@ -80,11 +80,20 @@ impl RTTSampler {
         // set RTT polling interval
         openocd.set_rtt_polling_interval(polling_interval).unwrap();
 
+        // find a suitable scope channel
+        // TODO: we could handle multiple RTT channels, in the future, if wanted
+        let available_rtt_channels = openocd.rtt_channels().unwrap();
+        let mut candidate_scope_channels = available_rtt_channels.iter().filter(|channel| {
+            // TODO: better detection logic
+            channel.direction == openocd::RTTChannelDirection::Up
+                && channel.name.to_lowercase().contains("scope")
+        });
+        let rtt_channel = candidate_scope_channels.next().unwrap();
+        println!("RTTSampler: picked RTT channel {:?}", rtt_channel);
+        let rtt_channel_id = rtt_channel.id;
+
         // close this OpenOCD interface since we have finished the RTT setup
         drop(openocd);
-
-        // TODO: query list of RTT channels and select an appropriate one
-        let rtt_channel_id = 2;
 
         // TODO: from the channel name obtained while listing channels, figure out
         // which signals are available and fill up the array
