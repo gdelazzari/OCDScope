@@ -25,7 +25,7 @@ impl SampleBuffer {
         self.samples.push(PlotPoint { x: t, y: value });
     }
 
-    pub fn plot_points(&self, from_t: f64, to_t: f64) -> PlotPoints {
+    pub fn plot_points(&self, from_t: f64, to_t: f64, scale: f64) -> PlotPoints {
         let from_i = index_before_at(&self.samples, from_t);
         let to_i = index_before_at(&self.samples, to_t);
 
@@ -43,7 +43,12 @@ impl SampleBuffer {
             debug_assert!(last_t <= to_t, "last_t = {}, to_t = {}", last_t, to_t);
         }
 
-        PlotPoints::Owned(slice.to_owned())
+        PlotPoints::Owned(
+            slice
+                .iter()
+                .map(|p| PlotPoint::new(p.x, p.y * scale))
+                .collect(),
+        )
     }
 
     pub fn plot_points_generator(
@@ -51,8 +56,9 @@ impl SampleBuffer {
         mut from_t: f64,
         mut to_t: f64,
         points: usize,
+        scale: f64,
     ) -> PlotPoints {
-        let subview = self.plot_points(from_t, to_t);
+        let subview = self.plot_points(from_t, to_t, scale);
 
         if subview.points().len() > 0 {
             let generator = move |t: f64| {
