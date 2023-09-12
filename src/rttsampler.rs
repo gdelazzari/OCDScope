@@ -21,11 +21,12 @@ const SAMPLE_BUFFER_SIZE: usize = 1024;
 // - we should handshake and list the channels asynchronously to the main thread,
 //   so we don't block it; but then the Sampler interface should allow for late update of
 //   the available signals and late reporting of errors
-// - factor out Telnet interaction, which might be useful also for other samplers
 // - it happened, sometimes, that the target didn't resume after sampling started; find a way to
 //   reproduce and investigate
 // - observed "Error: couldn't bind rtt to socket on port 9090: Address already in use" from OpenOCD
 //   console, may be related to the above
+// - maybe related to above two: if `rtt_server_start` fails, try to stop the server at that port and
+//   to start it again, since it could be that there is already one running on such port
 
 enum ThreadCommand {
     Stop,
@@ -78,21 +79,37 @@ impl RTTSampler {
         let rtt_channel = candidate_scope_channels.next().unwrap();
         println!("RTTSampler: picked RTT channel {:?}", rtt_channel);
         let rtt_channel_id = rtt_channel.id;
+        let rtt_channel_buffer_size = rtt_channel.buffer_size as usize;
+
+        // from the channel name obtained while listing channels, figure out
+        // which signals are available and fill up the array
+        let packet_structure = parse_scope_packet_structure(&rtt_channel.name).unwrap();
+        println!("Parsed scope packet structure {:?}", packet_structure);
+
+        let available_signals = packet_structure
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(i, field)| {
+                (
+                    i as u32,
+                    format!("y{} ({:?}, {} bytes)", i, field.type_, field.size),
+                )
+            })
+            .collect::<Vec<_>>();
+        println!("Available signals {:?}", &available_signals);
 
         // close this OpenOCD interface since we have finished the RTT setup
         drop(openocd);
 
-        // TODO: from the channel name obtained while listing channels, figure out
-        // which signals are available and fill up the array
-        let available_signals = vec![(0, "y0".into()), (1, "y1".into())];
-
         let telnet_address = telnet_address.to_socket_addrs().unwrap().next().unwrap();
 
         let join_handle = thread::spawn(move || {
-            // TODO: provide information about which signals are sampled
             sampler_thread(
                 telnet_address,
                 rtt_channel_id,
+                rtt_channel_buffer_size,
+                packet_structure,
                 polling_interval,
                 sampled_tx,
                 command_rx,
@@ -131,7 +148,9 @@ impl Sampler for RTTSampler {
 
 fn sampler_thread(
     telnet_address: SocketAddr,
-    rtt_channel_id: u32, // TODO: which is the correct type here?
+    rtt_channel_id: u32,
+    rtt_channel_buffer_size: usize,
+    packet_structure: RTTScopePacketStructure,
     polling_interval: u32,
     sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
@@ -158,9 +177,6 @@ fn sampler_thread(
     ));
 
     let polling_period = Duration::from_millis(polling_interval as u64);
-
-    // TODO: this is very very ugly, we should wait for the response to "rtt server start"
-    thread::sleep(Duration::from_millis(100));
 
     let mut rtt_channel =
         TcpStream::connect(rtt_channel_tcp_address).expect("Failed to connect to TCP stream");
@@ -198,9 +214,7 @@ fn sampler_thread(
         openocd.resume().unwrap();
     }
 
-    // TODO: all of this is very temporary and ad-hoc
-    const STRUCT_SIZE: usize = 4 + 4 * 2;
-    let rtt_buffer_size: usize = 4096; // TODO: get from channel list/description
+    let packet_size = packet_structure.packet_size();
 
     let mut buffer = Vec::new();
 
@@ -219,7 +233,7 @@ fn sampler_thread(
             Err(mpsc::TryRecvError::Disconnected) => panic!("Thread command channel closed TX end"),
         }
 
-        let mut read_buffer = vec![0; rtt_buffer_size];
+        let mut read_buffer = vec![0; rtt_channel_buffer_size];
 
         let read_result = rtt_channel.read(&mut read_buffer);
 
@@ -233,18 +247,27 @@ fn sampler_thread(
             _ => unreachable!(),
         }
 
-        while buffer.len() >= STRUCT_SIZE {
-            let timestamp = u32::from_le_bytes(buffer[0..4].try_into().unwrap()) as u64;
-            let y0 = f32::from_le_bytes(buffer[4..8].try_into().unwrap()) as f64;
-            let y1 = f32::from_le_bytes(buffer[8..12].try_into().unwrap()) as f64;
+        while buffer.len() >= packet_size {
+            let to_decode = &buffer[..packet_size];
 
-            let samples = vec![(0, y0), (1, y1)];
+            // TODO: handle errors
+            let (maybe_timestamp, values) = packet_structure.decode_bytes(to_decode).unwrap();
+
+            // TODO: handle time not provided
+            let timestamp = maybe_timestamp.unwrap() as u64;
+
+            let samples = values
+                .into_iter()
+                .enumerate()
+                .map(|(i, y)| (i as u32, y as f64))
+                .collect::<Vec<(u32, f64)>>();
+
             sampled_tx
                 .send((timestamp, samples))
                 .expect("Failed to send sampled value");
             rate_measurement_samples_received += 1;
 
-            buffer = buffer[STRUCT_SIZE..].to_vec();
+            buffer = buffer[packet_size..].to_vec();
         }
 
         let now = Instant::now();
@@ -259,4 +282,146 @@ fn sampler_thread(
     }
 
     openocd.rtt_server_stop(rtt_channel_tcp_port).unwrap();
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RTTScopePacketFieldType {
+    Boolean,
+    Float,
+    Signed,
+    Unsigned,
+}
+
+#[derive(Debug)]
+struct RTTScopePacketField {
+    type_: RTTScopePacketFieldType,
+    size: u8,
+}
+
+impl RTTScopePacketField {
+    fn parse(description: &str) -> Option<RTTScopePacketField> {
+        debug_assert!(description.len() == 2);
+
+        let type_char = (description.chars().nth(0)? as char).to_ascii_lowercase();
+        let size_char = (description.chars().nth(1)? as char).to_ascii_lowercase();
+
+        let size = [1, 2, 4][['1', '2', '4'].iter().position(|&c| c == size_char)?];
+
+        match (type_char, size) {
+            ('b', 1) => Some(RTTScopePacketField {
+                type_: RTTScopePacketFieldType::Boolean,
+                size,
+            }),
+            ('f', 4) => Some(RTTScopePacketField {
+                type_: RTTScopePacketFieldType::Float,
+                size,
+            }),
+            ('i', _) => Some(RTTScopePacketField {
+                type_: RTTScopePacketFieldType::Signed,
+                size,
+            }),
+            ('u', _) => Some(RTTScopePacketField {
+                type_: RTTScopePacketFieldType::Unsigned,
+                size,
+            }),
+            _ => None,
+        }
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Option<f32> {
+        use RTTScopePacketFieldType::*;
+
+        debug_assert!(bytes.len() == self.size as usize);
+
+        match self.type_ {
+            Boolean if *bytes.get(0)? != 0 => Some(1.0),
+            Boolean if *bytes.get(0)? == 0 => Some(0.0),
+            Float => Some(f32::from_le_bytes(bytes.try_into().ok()?)),
+            Signed if self.size == 1 => Some(i8::from_le_bytes(bytes.try_into().ok()?) as f32),
+            Signed if self.size == 2 => Some(i16::from_le_bytes(bytes.try_into().ok()?) as f32),
+            Signed if self.size == 4 => Some(i32::from_le_bytes(bytes.try_into().ok()?) as f32),
+            Unsigned if self.size == 1 => Some(u8::from_le_bytes(bytes.try_into().ok()?) as f32),
+            Unsigned if self.size == 2 => Some(u16::from_le_bytes(bytes.try_into().ok()?) as f32),
+            Unsigned if self.size == 4 => Some(u32::from_le_bytes(bytes.try_into().ok()?) as f32),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RTTScopePacketStructure {
+    has_u32_us_time: bool,
+    fields: Vec<RTTScopePacketField>,
+}
+
+impl RTTScopePacketStructure {
+    fn packet_size(&self) -> usize {
+        let time_field_size = if self.has_u32_us_time { 4 } else { 0 };
+
+        self.fields
+            .iter()
+            .map(|field| field.size as usize)
+            .sum::<usize>()
+            + time_field_size
+    }
+
+    fn decode_bytes(&self, mut bytes: &[u8]) -> Option<(Option<u32>, Vec<f32>)> {
+        let time = if self.has_u32_us_time {
+            let time_bytes = bytes[0..4].try_into().ok()?;
+            bytes = &bytes[4..];
+            Some(u32::from_le_bytes(time_bytes))
+        } else {
+            None
+        };
+
+        let values = self
+            .fields
+            .iter()
+            .map(|field| {
+                let to_decode = &bytes[0..field.size as usize];
+                bytes = &bytes[field.size as usize..];
+                field.decode(to_decode)
+            })
+            .collect::<Option<Vec<f32>>>();
+
+        Some((time, values?))
+    }
+}
+
+fn parse_scope_packet_structure(channel_name: &str) -> Option<RTTScopePacketStructure> {
+    // parses something like "JScope_T4F4F4F4F4", see
+    // https://wiki.segger.com/UM08028_J-Scope#RTT_channel_naming_convention
+
+    let format_string = channel_name.split('_').last()?.to_ascii_lowercase();
+
+    let mut to_parse: &str = &format_string;
+    let mut packet_structure = RTTScopePacketStructure {
+        has_u32_us_time: false,
+        fields: Vec::new(),
+    };
+
+    match to_parse.strip_prefix("t4") {
+        Some(stripped) => {
+            to_parse = stripped;
+            packet_structure.has_u32_us_time = true;
+        }
+        None => {
+            packet_structure.has_u32_us_time = false;
+        }
+    }
+
+    while to_parse.len() >= 2 {
+        packet_structure
+            .fields
+            .push(RTTScopePacketField::parse(&to_parse[0..2])?);
+
+        to_parse = &to_parse[2..];
+    }
+
+    if to_parse.len() > 0 {
+        debug_assert!(to_parse.len() == 1);
+        println!("leftover characters while parsing scope channel name");
+    }
+
+    Some(packet_structure)
 }

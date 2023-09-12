@@ -45,7 +45,7 @@ pub enum RTTChannelDirection {
 pub struct RTTChannel {
     pub id: u32,
     pub name: String,
-    pub size: u32,
+    pub buffer_size: u32,
     pub flags: u32,
     pub direction: RTTChannelDirection,
 }
@@ -410,7 +410,7 @@ fn parse_rtt_channels(lines: &[String]) -> Vec<RTTChannel> {
                     channels.push(RTTChannel {
                         id,
                         name,
-                        size,
+                        buffer_size: size,
                         flags,
                         direction,
                     })
