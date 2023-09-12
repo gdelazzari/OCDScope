@@ -451,7 +451,11 @@ impl eframe::App for OCDScope {
 }
 
 fn main() {
-    simple_logger::init_with_env().unwrap();
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Info)
+        .env()
+        .init()
+        .unwrap();
 
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(800.0, 600.0)),
