@@ -116,8 +116,6 @@ fn sampler_thread(
 
     let mut gdb = GDBRemote::connect(address);
 
-    const DEBUG_PRINT: bool = false;
-
     if !gdb.read_response().is_ack() {
         panic!("Expected initial ACK");
     }
