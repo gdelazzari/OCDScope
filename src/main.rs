@@ -23,10 +23,6 @@ enum SamplingMethod {
     Simulated,
 }
 
-enum PlotCommand {
-    Reset,
-}
-
 struct OCDScope {
     show_connect_dialog: bool,
     show_add_address_dialog: bool,
