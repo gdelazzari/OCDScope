@@ -23,6 +23,26 @@ enum SamplingMethod {
     Simulated,
 }
 
+struct SignalConfig {
+    id: u32,
+    name: String,
+    enabled: bool,
+    scale: f64,
+    scale_string: String,
+}
+
+impl SignalConfig {
+    fn new(id: u32, name: String) -> SignalConfig {
+        SignalConfig {
+            id,
+            name,
+            enabled: false,
+            scale: 1.0,
+            scale_string: "1.0".into(),
+        }
+    }
+}
+
 struct OCDScope {
     show_connect_dialog: bool,
     show_add_address_dialog: bool,
@@ -32,7 +52,7 @@ struct OCDScope {
 
     sampling_method: SamplingMethod,
     current_sampler: Option<Box<dyn Sampler>>,
-    signals: Vec<(u32, String, bool, f64, String)>,
+    signals: Vec<SignalConfig>,
     samples: HashMap<u32, SampleBuffer>,
     max_time: u64,
 
@@ -163,24 +183,25 @@ impl eframe::App for OCDScope {
                 egui::ScrollArea::vertical()
                     .max_height(120.0)
                     .show(ui, |ui| {
-                        for (id, name, enable, scale, scale_string) in self.signals.iter_mut() {
+                        for signal in self.signals.iter_mut() {
                             ui.horizontal(|item| {
                                 // TODO: color scale TextEdit in red if the value is invalid?
-                                some_enable_changed |= item.checkbox(enable, "").changed();
-                                if egui::TextEdit::singleline(scale_string)
-                                    .id(egui::Id::new(format!("signal-scale-{}", id)))
+                                some_enable_changed |=
+                                    item.checkbox(&mut signal.enabled, "").changed();
+                                if egui::TextEdit::singleline(&mut signal.scale_string)
+                                    .id(egui::Id::new(format!("signal-scale-{}", signal.id)))
                                     .desired_width(50.0)
                                     .text_color(egui::Color32::GREEN)
                                     .show(item)
                                     .response
                                     .changed()
                                 {
-                                    if let Ok(number) = scale_string.parse::<f64>() {
-                                        *scale = number;
+                                    if let Ok(number) = signal.scale_string.parse::<f64>() {
+                                        signal.scale = number;
                                     }
                                 }
-                                egui::TextEdit::singleline(name)
-                                    .id(egui::Id::new(format!("signal-name-{}", id)))
+                                egui::TextEdit::singleline(&mut signal.name)
+                                    .id(egui::Id::new(format!("signal-name-{}", signal.id)))
                                     .show(item);
                             });
                         }
@@ -197,9 +218,13 @@ impl eframe::App for OCDScope {
                         let active_ids = self
                             .signals
                             .iter()
-                            .filter_map(
-                                |&(id, _, enabled, _, _)| if enabled { Some(id) } else { None },
-                            )
+                            .filter_map(|signal| {
+                                if signal.enabled {
+                                    Some(signal.id)
+                                } else {
+                                    None
+                                }
+                            })
                             .collect::<Vec<_>>();
 
                         sampler.set_active_signals(&active_ids);
@@ -215,7 +240,7 @@ impl eframe::App for OCDScope {
                 let signal_scales = self
                     .signals
                     .iter()
-                    .map(|(_, name, _, scale, _)| (name.clone(), *scale))
+                    .map(|signal| (signal.name.clone(), signal.scale))
                     .collect::<HashMap<_, _>>();
 
                 // TODO: handle vertical scale for each signal
@@ -236,9 +261,9 @@ impl eframe::App for OCDScope {
                 }
 
                 plot.show(ui, |plot_ui| {
-                    for (id, name, enabled, scale, _) in &self.signals {
-                        if *enabled {
-                            if let Some(buffer) = self.samples.get(&id) {
+                    for signal in &self.signals {
+                        if signal.enabled {
+                            if let Some(buffer) = self.samples.get(&signal.id) {
                                 // TODO: constructing PlotPoints from an explicit callback makes the Plot widget
                                 // only ask for visible points; figure out how to provide the points in a memory and
                                 // computationally efficient way (some clever data structure might be needed), so that
@@ -284,11 +309,12 @@ impl eframe::App for OCDScope {
                                     buffer.plot_points(
                                         x_min - margin / 2.0,
                                         x_max + margin / 2.0,
-                                        *scale,
+                                        signal.scale,
                                     ),
                                     // buffer.plot_points_generator(x_min - margin / 2.0, x_max + margin / 2.0, 1000),
                                 )
-                                .name(name);
+                                .name(signal.name.clone());
+
                                 plot_ui.line(line);
                             }
                         }
@@ -330,13 +356,9 @@ impl eframe::App for OCDScope {
                             if let Ok(address) =
                                 u32::from_str_radix(&self.memory_address_to_add_string, 16)
                             {
-                                self.signals.push((
-                                    address,
-                                    format!("0x{:08x}", address),
-                                    false,
-                                    1.0,
-                                    "1.0".into(),
-                                ));
+                                self.signals
+                                    .push(SignalConfig::new(address, format!("0x{:08x}", address)));
+
                                 self.show_add_address_dialog = false;
                             }
                         }
@@ -442,12 +464,12 @@ impl eframe::App for OCDScope {
                             self.signals = sampler
                                 .available_signals()
                                 .into_iter()
-                                .map(|(id, name)| (id, name, false, 1.0, "1.0".into()))
+                                .map(|(id, name)| SignalConfig::new(id, name))
                                 .collect();
 
                             if let Some(first) = self.signals.iter_mut().next() {
-                                first.2 = true;
-                                sampler.set_active_signals(&[first.0]);
+                                first.enabled = true;
+                                sampler.set_active_signals(&[first.id]);
                             }
 
                             self.current_sampler = Some(sampler);
