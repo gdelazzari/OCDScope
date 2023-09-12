@@ -131,10 +131,9 @@ impl eframe::App for OCDScope {
             });
         });
 
-        // TODO: bringing `maybe_plot_command` out is really ugly
-        // TODO: the sidebar doesn't behave well: can't type on text edit controls,
-        // can't resize smoothly
-        let maybe_plot_command = egui::panel::SidePanel::left("sidebar")
+        let mut reset_plot = false;
+
+        egui::panel::SidePanel::left("sidebar")
             .resizable(true)
             .default_width(300.0)
             .show(ctx, |ui| {
@@ -153,25 +152,14 @@ impl eframe::App for OCDScope {
                     ));
                 });
 
-                ui.spacing();
+                ui.separator();
 
                 ui.label(egui::RichText::new("Controls").strong());
+                reset_plot |= ui.button("Reset plot").clicked();
+                ui.checkbox(&mut self.plot_auto_follow, "Plot auto follow");
+                ui.checkbox(&mut self.buffer_auto_truncate, "Buffer auto truncate");
 
-                let maybe_plot_command = ui
-                    .group(|ui| {
-                        let reset_plot = ui.button("Reset plot").clicked();
-                        ui.checkbox(&mut self.plot_auto_follow, "Plot auto follow");
-                        ui.checkbox(&mut self.buffer_auto_truncate, "Buffer auto truncate");
-
-                        if reset_plot {
-                            Some(PlotCommand::Reset)
-                        } else {
-                            None
-                        }
-                    })
-                    .inner;
-
-                ui.spacing();
+                ui.separator();
 
                 ui.label(egui::RichText::new("Signals").strong());
 
@@ -179,13 +167,11 @@ impl eframe::App for OCDScope {
                 egui::ScrollArea::vertical()
                     .max_height(120.0)
                     .show(ui, |ui| {
-                        for (_, name, enable) in self.signals.iter_mut() {
+                        for (id, name, enable) in self.signals.iter_mut() {
                             ui.horizontal(|item| {
                                 some_enable_changed |= item.checkbox(enable, "").changed();
-                                let id = name.clone();
                                 egui::TextEdit::singleline(name)
-                                    .id(egui::Id::new(id))
-                                    .desired_width(100.0)
+                                    .id(egui::Id::new(format!("signal-{}", id)))
                                     .show(item);
                             });
                         }
@@ -208,10 +194,7 @@ impl eframe::App for OCDScope {
                         sampler.set_active_signals(&active_ids);
                     }
                 }
-
-                maybe_plot_command
-            })
-            .inner;
+            });
 
         egui::CentralPanel::default()
             .show(ctx, |ui| {
@@ -229,7 +212,7 @@ impl eframe::App for OCDScope {
                         }
                     });
 
-                if let Some(PlotCommand::Reset) = maybe_plot_command {
+                if reset_plot {
                     plot = plot.reset();
                     self.plot_auto_follow = false;
                 }
