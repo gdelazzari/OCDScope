@@ -211,13 +211,20 @@ impl eframe::App for OCDScope {
             .show(ctx, |ui| {
                 use egui::plot::{AxisBools, Legend, Line, Plot, PlotBounds};
 
+                // TODO: a vector with linear search might be more efficient, investigate
+                let signal_scales = self
+                    .signals
+                    .iter()
+                    .map(|(_, name, _, scale, _)| (name.clone(), *scale))
+                    .collect::<HashMap<_, _>>();
+
                 // TODO: handle vertical scale for each signal
                 let mut plot = Plot::new("main")
                     .legend(Legend::default())
                     .allow_zoom(AxisBools { x: true, y: false })
-                    .label_formatter(|name, value| {
-                        if !name.is_empty() {
-                            format!("{}\nx: {}\ny: {}", name, value.x, value.y)
+                    .label_formatter(move |name, value| {
+                        if let Some(scale) = signal_scales.get(name) {
+                            format!("{}\nx: {}\ny: {}", name, value.x, value.y / scale)
                         } else {
                             "".to_owned()
                         }
@@ -274,7 +281,11 @@ impl eframe::App for OCDScope {
                                 let margin = if width == 0.0 { 0.1 } else { width };
 
                                 let line = Line::new(
-                                    buffer.plot_points(x_min - margin / 2.0, x_max + margin / 2.0, *scale),
+                                    buffer.plot_points(
+                                        x_min - margin / 2.0,
+                                        x_max + margin / 2.0,
+                                        *scale,
+                                    ),
                                     // buffer.plot_points_generator(x_min - margin / 2.0, x_max + margin / 2.0, 1000),
                                 )
                                 .name(name);
