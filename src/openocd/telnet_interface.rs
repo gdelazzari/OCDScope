@@ -58,7 +58,7 @@ impl TelnetInterface {
         let now = Instant::now();
 
         if timeout_at < now {
-            println!("TelnetInterface: early return due to `timeout_at` in the past");
+            log::warn!("early return due to `timeout_at` in the past");
             return Err(TelnetInterfaceError::Timeout);
         }
 
@@ -68,7 +68,7 @@ impl TelnetInterface {
             Ok(Event::Data(buffer)) => {
                 let n = buffer.len();
 
-                println!("TelnetInterface: read {} bytes: {:?}", n, &buffer[..]);
+                log::trace!("read {} bytes: {:?}", n, &buffer[..]);
 
                 // only append bytes different from 0x00, see https://www.rfc-editor.org/rfc/rfc854
                 // at page 10 where 0x00 is NOP for the printer
@@ -86,7 +86,7 @@ impl TelnetInterface {
     fn wait_prompt(&mut self, timeout_at: Instant) -> Result<()> {
         loop {
             if self.buffer.ends_with(b"> ") {
-                println!("TelnetInterface: found prompt, clearing buffer");
+                log::trace!("found prompt, clearing buffer");
                 self.buffer.clear();
                 return Ok(());
             }
@@ -106,10 +106,7 @@ impl TelnetInterface {
 
                     debug_assert!(self.buffer.len() == previous_len - line.len());
 
-                    println!(
-                        "TelnetInterface: read line {:?}",
-                        String::from_utf8(line.clone())
-                    );
+                    log::trace!("read line {:?}", String::from_utf8(line.clone()));
 
                     // two backspaces are sent to erase the prompt '> ', print debug lines, and then
                     // put the prompt back
@@ -117,7 +114,7 @@ impl TelnetInterface {
                     // lines should be ignored; figure out how to do this, or try to configure the Telnet
                     // session so that this information isn't written to us
                     if line.len() >= 2 && &line[0..2] == &[8, 8] {
-                        println!("TelnetInterface: ignoring line since it begins with [8, 8]");
+                        log::warn!("ignoring line since it begins with [8, 8]");
                         continue;
                     }
 
@@ -140,7 +137,7 @@ impl TelnetInterface {
         if !predicate(&line) {
             return Err(TelnetInterfaceError::UnexpectedResponse(line));
         } else {
-            println!("TelnetInterface: found line matching predicate");
+            log::trace!("found line matching predicate");
             return Ok(line);
         }
     }
@@ -149,7 +146,7 @@ impl TelnetInterface {
         let line = format!("{}\r\n", command);
         let buffer = line.as_bytes().to_vec();
 
-        println!("TelnetInterface: writing {}", line);
+        log::trace!("writing \"{}\"", line);
 
         self.connection.write(&buffer)?;
 

@@ -4,9 +4,9 @@ use eframe::egui;
 
 mod buffer;
 mod fakesampler;
-mod openocd;
 mod gdbremote;
 mod memsampler;
+mod openocd;
 mod rttsampler;
 mod sampler;
 
@@ -451,6 +451,8 @@ impl eframe::App for OCDScope {
 }
 
 fn main() {
+    simple_logger::init_with_env().unwrap();
+
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(800.0, 600.0)),
         ..Default::default()

@@ -66,7 +66,7 @@ impl MemSampler {
                     .collect();
             } else {
                 // TODO: better error handling and reporting
-                println!("Failed to parse ELF symbols");
+                log::error!("failed to parse ELF symbols");
             }
         }
 
@@ -169,7 +169,7 @@ fn sampler_thread(
             //   rate; this should be somehow communicated through the sampler interface, but the
             //   details of the interface related to the sampling rate are still to be defined
             //   (if any)
-            println!(
+            log::warn!(
                 "lagging behind by {}us ({}%)",
                 lag.as_micros(),
                 (lag.as_secs_f64() * rate * 100.0).round() as i32
@@ -208,9 +208,7 @@ fn sampler_thread(
             loop {
                 let response = gdb.read_response();
 
-                if DEBUG_PRINT {
-                    println!("{:?} : {:?}", response, response.to_string());
-                }
+                log::trace!("{:?} : {:?}", response, response.to_string());
 
                 match response {
                     // OpenOCD sends empty 'O' packets during target execution to keep the
@@ -235,8 +233,8 @@ fn sampler_thread(
                         {
                             // TODO: empty the GDB responses queue, to start fresh, and
                             // try sampling again at next outer iteration
-                            println!(
-                                "Unexpected/unparsable response to read request: {:?}",
+                            log::error!(
+                                "unexpected/unparsable response to read request: {:?}",
                                 response
                             );
                         }
@@ -272,7 +270,7 @@ fn parse_elf_symbols(path: PathBuf) -> Option<Vec<ParsedELFSymbol>> {
 
     use elf::endian::LittleEndian;
 
-    println!("Opening ELF file {:?}", path);
+    log::info!("opening ELF file {:?}", path);
 
     let file = std::fs::File::open(path).unwrap();
     let mut elf = elf::ElfStream::<LittleEndian, _>::open_stream(file).unwrap();

@@ -60,7 +60,7 @@ impl RTTSampler {
         // TODO: make the following settings configurable
         openocd.rtt_setup(0x20000000, 8192, "SEGGER RTT").unwrap();
         let rtt_block_address = openocd.rtt_start().unwrap();
-        println!("Found RTT control block at 0x{:08X}", rtt_block_address);
+        log::debug!("found RTT control block at 0x{:08X}", rtt_block_address);
 
         // ask 1GHz probe clock, to likely obtain the maximum one
         openocd.set_adapter_speed(1_000_000).unwrap();
@@ -77,14 +77,14 @@ impl RTTSampler {
                 && channel.name.to_lowercase().contains("scope")
         });
         let rtt_channel = candidate_scope_channels.next().unwrap();
-        println!("RTTSampler: picked RTT channel {:?}", rtt_channel);
+        log::debug!("picked RTT channel {:?}", rtt_channel);
         let rtt_channel_id = rtt_channel.id;
         let rtt_channel_buffer_size = rtt_channel.buffer_size as usize;
 
         // from the channel name obtained while listing channels, figure out
         // which signals are available and fill up the array
         let packet_structure = parse_scope_packet_structure(&rtt_channel.name).unwrap();
-        println!("Parsed scope packet structure {:?}", packet_structure);
+        log::debug!("parsed scope packet structure {:?}", packet_structure);
 
         let available_signals = packet_structure
             .fields
@@ -97,7 +97,7 @@ impl RTTSampler {
                 )
             })
             .collect::<Vec<_>>();
-        println!("Available signals {:?}", &available_signals);
+        log::debug!("available signals {:?}", &available_signals);
 
         // close this OpenOCD interface since we have finished the RTT setup
         drop(openocd);
@@ -180,7 +180,7 @@ fn sampler_thread(
 
     let mut rtt_channel =
         TcpStream::connect(rtt_channel_tcp_address).expect("Failed to connect to TCP stream");
-    println!("RTT TCP stream connected");
+    log::info!("RTT TCP stream connected");
 
     // synchronize the channel: pause the target, ensure the stream is empty, then
     // resume; the RTT writes in the ring-buffer are atomic, so this should work
@@ -199,10 +199,10 @@ fn sampler_thread(
         loop {
             let mut throwaway = [0; 4096];
             match rtt_channel.read(&mut throwaway) {
-                Ok(0) => println!("RTT channel sync: read 0 bytes (?)"),
-                Ok(n) => println!("RTT channel sync: thrown away {} bytes", n),
+                Ok(0) => log::debug!("RTT channel sync: read 0 bytes (?)"),
+                Ok(n) => log::debug!("RTT channel sync: thrown away {} bytes", n),
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    println!("RTT channel sync: completed");
+                    log::info!("RTT channel sync: completed");
                     break;
                 }
                 Err(err) => {
@@ -239,8 +239,8 @@ fn sampler_thread(
 
         match read_result {
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(err) => println!("RTT channel read error: {:?}", err),
-            Ok(n) if n == 0 => println!("RTT channel read 0 bytes"),
+            Err(err) => log::error!("RTT channel read error: {:?}", err),
+            Ok(n) if n == 0 => log::warn!("RTT channel read 0 bytes"),
             Ok(n) if n > 0 => {
                 buffer.extend_from_slice(&read_buffer[0..n]);
             }
@@ -274,7 +274,7 @@ fn sampler_thread(
         if now - previous_rate_measurement_instant >= Duration::from_secs(1) {
             let measured_rate = rate_measurement_samples_received as f64
                 / (now - previous_rate_measurement_instant).as_secs_f64();
-            println!("Measured rate {} samples/s", measured_rate);
+            log::info!("measured rate {} samples/s", measured_rate);
 
             rate_measurement_samples_received = 0;
             previous_rate_measurement_instant = now;
@@ -420,7 +420,7 @@ fn parse_scope_packet_structure(channel_name: &str) -> Option<RTTScopePacketStru
 
     if to_parse.len() > 0 {
         debug_assert!(to_parse.len() == 1);
-        println!("leftover characters while parsing scope channel name");
+        log::warn!("leftover characters while parsing scope channel name");
     }
 
     Some(packet_structure)
