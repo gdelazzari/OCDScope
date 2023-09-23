@@ -112,6 +112,22 @@ impl SampleBuffer {
             None
         }
     }
+
+    pub fn truncate(&mut self, keep_seconds: f64) {
+        if self.samples.len() == 0 {
+            return;
+        }
+
+        let last_timestamp = self.samples.last().unwrap().x;
+        let truncate_timestamp = last_timestamp - keep_seconds;
+        let trigger_timestamp = last_timestamp - keep_seconds;
+
+        if self.samples.first().unwrap().x < trigger_timestamp {
+            let a = index_before_at(&self.samples, truncate_timestamp).unwrap();
+            log::trace!("truncating buffer at {} / {}", a, self.samples.len());
+            self.samples.drain(..(a+1));
+        }
+    }
 }
 
 fn index_before_at(samples: &[PlotPoint], t: f64) -> Option<usize> {
