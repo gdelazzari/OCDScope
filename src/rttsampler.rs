@@ -58,7 +58,8 @@ impl RTTSampler {
 
         // setup and start RTT
         // TODO: make the following settings configurable
-        openocd.rtt_setup(0x20000000, 8192, "SEGGER RTT").unwrap();
+        openocd.set_timeout(Duration::from_millis(2000));
+        openocd.rtt_setup(0x20000000, 128 * 1024, "SEGGER RTT").unwrap();
         let rtt_block_address = openocd.rtt_start().unwrap();
         log::debug!("found RTT control block at 0x{:08X}", rtt_block_address);
 
