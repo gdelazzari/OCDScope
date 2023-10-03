@@ -27,6 +27,9 @@ const SAMPLE_BUFFER_SIZE: usize = 1024;
 //   console, may be related to the above
 // - maybe related to above two: if `rtt_server_start` fails, try to stop the server at that port and
 //   to start it again, since it could be that there is already one running on such port
+// - FIXME: was sampling, the PC was put to sleep and the debugger disconnected (not sure
+//   in which order those two things happened) and when resumed the sampler was spamming 0
+//   samples/s of sampling rate, maxing out CPU usage
 
 enum ThreadCommand {
     Stop,

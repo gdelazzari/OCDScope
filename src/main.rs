@@ -1,3 +1,7 @@
+// TODO:
+// - implement export functionality, in CSV and NumPy formats at least, then possibly others
+//   (MATLAB, HDF5, WAV)
+
 use std::{collections::HashMap, path::PathBuf};
 
 use eframe::egui;
