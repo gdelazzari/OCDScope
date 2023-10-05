@@ -1,7 +1,3 @@
-// TODO:
-// - implement export functionality, in CSV and NumPy formats at least, then possibly others
-//   (MATLAB, HDF5, WAV)
-
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -12,59 +8,12 @@ use eframe::egui;
 mod buffer;
 mod gdbremote;
 mod openocd;
+mod parsablefloat;
 mod sampler;
 
 use buffer::SampleBuffer;
+use parsablefloat::ParsableFloat;
 use sampler::{FakeSampler, MemSampler, RTTSampler, Sampler};
-
-struct ParsableFloat {
-    value: f64,
-    string: String,
-    last_parse_ok: bool,
-}
-
-impl ParsableFloat {
-    fn new(value: f64) -> ParsableFloat {
-        ParsableFloat {
-            value,
-            string: value.to_string(),
-            last_parse_ok: true,
-        }
-    }
-
-    fn editable_string(&mut self) -> &mut String {
-        &mut self.string
-    }
-
-    fn update(&mut self) {
-        if let Ok(value) = self.string.parse::<f64>() {
-            self.value = value;
-            self.last_parse_ok = true;
-        } else {
-            self.last_parse_ok = false;
-        }
-    }
-
-    fn value(&self) -> f64 {
-        self.value
-    }
-
-    fn is_parsed_ok(&self) -> bool {
-        self.last_parse_ok
-    }
-}
-
-impl From<f64> for ParsableFloat {
-    fn from(value: f64) -> Self {
-        ParsableFloat::new(value)
-    }
-}
-
-impl From<ParsableFloat> for f64 {
-    fn from(pf: ParsableFloat) -> Self {
-        pf.value()
-    }
-}
 
 #[derive(Debug, PartialEq, Eq)]
 enum SamplingMethod {
