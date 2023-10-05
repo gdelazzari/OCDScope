@@ -10,17 +10,14 @@ use std::{
 use eframe::egui;
 
 mod buffer;
-mod fakesampler;
 mod gdbremote;
-mod memsampler;
 mod openocd;
-mod rttsampler;
 mod sampler;
 
 use buffer::SampleBuffer;
-use fakesampler::FakeSampler;
-use memsampler::MemSampler;
-use rttsampler::RTTSampler;
+use sampler::FakeSampler;
+use sampler::MemSampler;
+use sampler::RTTSampler;
 use sampler::Sampler;
 
 struct ParsableFloat {

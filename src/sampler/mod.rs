@@ -1,5 +1,13 @@
 use std::sync::mpsc;
 
+mod fakesampler;
+mod rttsampler;
+mod memsampler;
+
+pub use fakesampler::FakeSampler;
+pub use rttsampler::RTTSampler;
+pub use memsampler::MemSampler;
+
 // TODOs:
 // - error handling
 // - some samplers might not provide available signals,
