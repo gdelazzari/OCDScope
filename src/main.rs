@@ -15,10 +15,7 @@ mod openocd;
 mod sampler;
 
 use buffer::SampleBuffer;
-use sampler::FakeSampler;
-use sampler::MemSampler;
-use sampler::RTTSampler;
-use sampler::Sampler;
+use sampler::{FakeSampler, MemSampler, RTTSampler, Sampler};
 
 struct ParsableFloat {
     value: f64,
