@@ -25,6 +25,10 @@ impl SampleBuffer {
         self.samples.push(PlotPoint { x: t, y: value });
     }
 
+    pub fn samples(&self) -> &[PlotPoint] {
+        &self.samples
+    }
+
     pub fn plot_points(&self, from_t: f64, to_t: f64, scale: f64) -> PlotPoints {
         let from_i = index_before_at(&self.samples, from_t);
         let to_i = index_before_at(&self.samples, to_t);
@@ -125,7 +129,7 @@ impl SampleBuffer {
         if self.samples.first().unwrap().x < trigger_timestamp {
             let a = index_before_at(&self.samples, truncate_timestamp).unwrap();
             log::trace!("truncating buffer at {} / {}", a, self.samples.len());
-            self.samples.drain(..(a+1));
+            self.samples.drain(..(a + 1));
         }
     }
 }
