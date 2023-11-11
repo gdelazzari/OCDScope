@@ -1,11 +1,14 @@
-use std::{sync::mpsc, thread, time::Duration};
+use std::{panic::catch_unwind, sync::mpsc, thread, time::Duration};
 
 use crate::sampler::{Notification, Sample, Sampler, Status};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
+#[derive(Debug)]
 enum ThreadCommand {
     SetActiveSignals(Vec<u32>),
+    Pause,
+    Resume,
     Stop,
 }
 
@@ -22,7 +25,8 @@ impl FakeSampler {
         let (command_tx, command_rx) = mpsc::channel();
         let (notifications_tx, notifications_rx) = mpsc::channel();
 
-        let join_handle = thread::spawn(move || sampler_thread(rate, sampled_tx, command_rx));
+        let join_handle =
+            thread::spawn(move || sampler_thread(rate, sampled_tx, command_rx, notifications_tx));
 
         let sampler = FakeSampler {
             join_handle,
@@ -78,6 +82,7 @@ fn sampler_thread(
     rate: f64,
     sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
+    notifications_tx: mpsc::Sender<Notification>,
 ) {
     use std::time::Instant;
 
@@ -86,47 +91,102 @@ fn sampler_thread(
     let omega0 = 1.0 * std::f64::consts::FRAC_2_PI;
     let omega1 = 10.0 * std::f64::consts::FRAC_2_PI;
     let omega2 = 100.0 * std::f64::consts::FRAC_2_PI;
+
+    let mut status = Status::Initializing;
+    let mut last_sampled_at = Instant::now();
     let mut active_ids = Vec::new();
 
-    let mut last_sampled_at = Instant::now();
     loop {
-        // 1. process commands, if any
-        match command_rx.try_recv() {
-            Ok(ThreadCommand::Stop) => {
+        let mut maybe_new_status = None;
+
+        match status {
+            Status::Initializing => {
+                maybe_new_status = Some(Status::Sampling);
+                last_sampled_at = Instant::now();
+            }
+            Status::Sampling => {
+                // 1. process commands, if any
+                match command_rx.try_recv() {
+                    Ok(ThreadCommand::Stop) => {
+                        maybe_new_status = Some(Status::Terminated);
+                    }
+                    Ok(ThreadCommand::Pause) => {
+                        maybe_new_status = Some(Status::Paused);
+                    }
+                    Ok(ThreadCommand::SetActiveSignals(ids)) => {
+                        // TODO: validate before setting?
+                        active_ids = ids;
+                    }
+                    Ok(other) => {
+                        log::warn!("Unexpected command in sampling state: {:?}", other);
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // no message in the commands channel, so we proceed with the sampling activity
+
+                        // 2. wait for the next sample time
+                        let elapsed = last_sampled_at.elapsed();
+                        if elapsed < period {
+                            thread::sleep(period - elapsed);
+                        }
+                        last_sampled_at += period;
+
+                        // 3. sample
+                        t += period.as_secs_f64();
+
+                        let y0 = (t * omega0).sin();
+                        let y1 = (t * omega1).sin();
+                        let y2 = (t * omega2).sin();
+                        let ys = [y0, y1, y2];
+
+                        if active_ids.len() > 0 {
+                            let samples = active_ids
+                                .iter()
+                                .map(|&id| (id, ys[id as usize]))
+                                .collect::<Vec<_>>();
+
+                            sampled_tx
+                                .send(((t * 1e6) as u64, samples))
+                                .expect("Failed to send sampled values");
+                        }
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        panic!("Thread command channel closed TX end");
+                    }
+                }
+            }
+            Status::Paused => match command_rx.recv() {
+                Ok(ThreadCommand::Stop) => {
+                    maybe_new_status = Some(Status::Terminated);
+                }
+                Ok(ThreadCommand::Resume) => {
+                    maybe_new_status = Some(Status::Sampling);
+                    last_sampled_at = Instant::now();
+                }
+                Ok(ThreadCommand::SetActiveSignals(ids)) => {
+                    // TODO: validate before setting?
+                    active_ids = ids;
+                }
+                Ok(other) => {
+                    log::warn!("Unexpected command in paused state: {:?}", other);
+                }
+                Err(err) => {
+                    panic!("Thread command channel closed TX end ({:?})", err);
+                }
+            },
+            Status::Terminated => {
+                // break the main loop, finishing this thread
                 break;
             }
-            Ok(ThreadCommand::SetActiveSignals(ids)) => {
-                // TODO: validate before setting?
-                active_ids = ids;
+        }
+
+        match maybe_new_status {
+            Some(new_status) if new_status != status => {
+                notifications_tx
+                    .send(Notification::NewStatus(new_status))
+                    .unwrap();
+                status = new_status;
             }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => panic!("Thread command channel closed TX end"),
-        }
-
-        // 2. wait for the next sample time
-        let elapsed = last_sampled_at.elapsed();
-        if elapsed < period {
-            thread::sleep(period - elapsed);
-        }
-        last_sampled_at += period;
-
-        // 3. sample
-        t += period.as_secs_f64();
-
-        let y0 = (t * omega0).sin();
-        let y1 = (t * omega1).sin();
-        let y2 = (t * omega2).sin();
-        let ys = [y0, y1, y2];
-
-        if active_ids.len() > 0 {
-            let samples = active_ids
-                .iter()
-                .map(|&id| (id, ys[id as usize]))
-                .collect::<Vec<_>>();
-
-            sampled_tx
-                .send(((t * 1e6) as u64, samples))
-                .expect("Failed to send sampled values");
+            _ => {}
         }
     }
 }
