@@ -16,6 +16,7 @@ pub use memsampler::MemSampler;
 
 pub type Sample = (u64, Vec<(u32, f64)>);
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Status {
     Initializing,
     Sampling,
@@ -23,6 +24,7 @@ pub enum Status {
     Terminated,
 }
 
+#[derive(Debug, Clone)]
 pub enum Notification {
     NewStatus(Status),
     Info(String),
