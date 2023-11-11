@@ -151,12 +151,12 @@ impl Sampler for RTTSampler {
         &self.notifications_rx
     }
 
-    fn pause(self: Box<Self>) {
+    fn pause(&self) {
         // TODO: do not unwrap here
         // self.command_tx.send(ThreadCommand::Pause).unwrap();
     }
 
-    fn resume(self: Box<Self>) {
+    fn resume(&self) {
         // TODO: do not unwrap here
         // self.command_tx.send(ThreadCommand::Resume).unwrap();
     }

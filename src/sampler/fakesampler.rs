@@ -53,19 +53,19 @@ impl Sampler for FakeSampler {
     fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
         &self.sampled_rx
     }
-    
+
     fn notification_channel(&self) -> &mpsc::Receiver<Notification> {
         &self.notifications_rx
     }
 
-    fn pause(self: Box<Self>) {
+    fn pause(&self) {
         // TODO: do not unwrap here
-        // self.command_tx.send(ThreadCommand::Pause).unwrap();
+        self.command_tx.send(ThreadCommand::Pause).unwrap();
     }
 
-    fn resume(self: Box<Self>) {
+    fn resume(&self) {
         // TODO: do not unwrap here
-        // self.command_tx.send(ThreadCommand::Resume).unwrap();
+        self.command_tx.send(ThreadCommand::Resume).unwrap();
     }
 
     fn stop(self: Box<Self>) {

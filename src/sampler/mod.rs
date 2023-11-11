@@ -40,7 +40,8 @@ pub trait Sampler {
 
     fn notification_channel(&self) -> &mpsc::Receiver<Notification>;
 
-    fn pause(self: Box<Self>);
-    fn resume(self: Box<Self>);
+    fn pause(&self);
+    fn resume(&self);
+
     fn stop(self: Box<Self>);
 }
