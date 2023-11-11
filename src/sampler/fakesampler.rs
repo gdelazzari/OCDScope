@@ -25,8 +25,23 @@ impl FakeSampler {
         let (command_tx, command_rx) = mpsc::channel();
         let (notifications_tx, notifications_rx) = mpsc::channel();
 
-        let join_handle =
-            thread::spawn(move || sampler_thread(rate, sampled_tx, command_rx, notifications_tx));
+        let join_handle = thread::spawn(move || {
+            let result = sampler_thread(rate, sampled_tx, command_rx, notifications_tx.clone());
+
+            if let Err(err) = result {
+                log::error!("sampler thread returned with error {:?}", err);
+                log::debug!("sending error notification and switch to terminated state");
+
+                // ignore the send errors instead of unwrapping, at this point if even sending to
+                // `notifications_tx` fails, the situation is sort of unrecoverable
+                if let Err(e) = notifications_tx.send(Notification::Error(format!("{:?}", err))) {
+                    log::error!("error notification send failed: {:?}", e);
+                }
+                if let Err(e) = notifications_tx.send(Notification::NewStatus(Status::Terminated)) {
+                    log::error!("new status notification send failed: {:?}", e);
+                }
+            }
+        });
 
         let sampler = FakeSampler {
             join_handle,
@@ -73,8 +88,17 @@ impl Sampler for FakeSampler {
     }
 
     fn stop(self: Box<Self>) {
-        self.command_tx.send(ThreadCommand::Stop).unwrap();
-        self.join_handle.join().unwrap();
+        if let Err(err) = self.command_tx.send(ThreadCommand::Stop) {
+            log::warn!("asked to stop sampler but thread seems to already be dead (command send failed: {:?})", err);
+
+            debug_assert!(self.join_handle.is_finished());
+        }
+
+        // TODO: if there are implementation errors in the sampler thread, and the Stop command is not processed,
+        // this can block indefinitely
+        if let Err(err) = self.join_handle.join() {
+            log::warn!("failed to join sampler thread: {:?}", err);
+        }
     }
 }
 
@@ -83,7 +107,7 @@ fn sampler_thread(
     sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
     notifications_tx: mpsc::Sender<Notification>,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     use std::time::Instant;
 
     let period = Duration::from_secs_f64(1.0 / rate);
@@ -144,13 +168,11 @@ fn sampler_thread(
                                 .map(|&id| (id, ys[id as usize]))
                                 .collect::<Vec<_>>();
 
-                            sampled_tx
-                                .send(((t * 1e6) as u64, samples))
-                                .expect("Failed to send sampled values");
+                            sampled_tx.send(((t * 1e6) as u64, samples))?;
                         }
                     }
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        panic!("Thread command channel closed TX end");
+                    Err(err) => {
+                        return Err(Box::new(err));
                     }
                 }
             }
@@ -170,7 +192,7 @@ fn sampler_thread(
                     log::warn!("Unexpected command in paused state: {:?}", other);
                 }
                 Err(err) => {
-                    panic!("Thread command channel closed TX end ({:?})", err);
+                    return Err(Box::new(err));
                 }
             },
             Status::Terminated => {
@@ -181,12 +203,12 @@ fn sampler_thread(
 
         match maybe_new_status {
             Some(new_status) if new_status != status => {
-                notifications_tx
-                    .send(Notification::NewStatus(new_status))
-                    .unwrap();
+                notifications_tx.send(Notification::NewStatus(new_status))?;
                 status = new_status;
             }
             _ => {}
         }
     }
+
+    Ok(())
 }
