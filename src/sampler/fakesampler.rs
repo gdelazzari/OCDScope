@@ -1,6 +1,6 @@
 use std::{sync::mpsc, thread, time::Duration};
 
-use crate::sampler::{Sample, Sampler};
+use crate::sampler::{Notification, Sample, Sampler, Status};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
@@ -12,6 +12,7 @@ enum ThreadCommand {
 pub struct FakeSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
+    notifications_rx: mpsc::Receiver<Notification>,
     sampled_rx: mpsc::Receiver<Sample>,
 }
 
@@ -19,12 +20,14 @@ impl FakeSampler {
     pub fn start(rate: f64) -> FakeSampler {
         let (sampled_tx, sampled_rx) = mpsc::sync_channel(SAMPLE_BUFFER_SIZE);
         let (command_tx, command_rx) = mpsc::channel();
+        let (notifications_tx, notifications_rx) = mpsc::channel();
 
         let join_handle = thread::spawn(move || sampler_thread(rate, sampled_tx, command_rx));
 
         let sampler = FakeSampler {
             join_handle,
             command_tx,
+            notifications_rx,
             sampled_rx,
         };
 
@@ -49,6 +52,20 @@ impl Sampler for FakeSampler {
 
     fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
         &self.sampled_rx
+    }
+    
+    fn notification_channel(&self) -> &mpsc::Receiver<Notification> {
+        &self.notifications_rx
+    }
+
+    fn pause(self: Box<Self>) {
+        // TODO: do not unwrap here
+        // self.command_tx.send(ThreadCommand::Pause).unwrap();
+    }
+
+    fn resume(self: Box<Self>) {
+        // TODO: do not unwrap here
+        // self.command_tx.send(ThreadCommand::Resume).unwrap();
     }
 
     fn stop(self: Box<Self>) {

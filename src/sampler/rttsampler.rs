@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     openocd,
-    sampler::{Sample, Sampler},
+    sampler::{Sample, Sampler, Notification, Status},
 };
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
@@ -38,6 +38,7 @@ enum ThreadCommand {
 pub struct RTTSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
+    notifications_rx: mpsc::Receiver<Notification>,
     sampled_rx: mpsc::Receiver<Sample>,
     available_signals: Vec<(u32, String)>,
 }
@@ -46,6 +47,7 @@ impl RTTSampler {
     pub fn start<A: ToSocketAddrs + Clone>(telnet_address: A, polling_interval: u32) -> RTTSampler {
         let (sampled_tx, sampled_rx) = mpsc::sync_channel(SAMPLE_BUFFER_SIZE);
         let (command_tx, command_rx) = mpsc::channel();
+        let (notifications_tx, notifications_rx) = mpsc::channel();
 
         // TODO: handle and report errors of various kind, during initial connection
         // and handshake
@@ -124,6 +126,7 @@ impl RTTSampler {
             join_handle,
             command_tx,
             sampled_rx,
+            notifications_rx,
             available_signals,
         };
 
@@ -142,6 +145,20 @@ impl Sampler for RTTSampler {
 
     fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
         &self.sampled_rx
+    }
+        
+    fn notification_channel(&self) -> &mpsc::Receiver<Notification> {
+        &self.notifications_rx
+    }
+
+    fn pause(self: Box<Self>) {
+        // TODO: do not unwrap here
+        // self.command_tx.send(ThreadCommand::Pause).unwrap();
+    }
+
+    fn resume(self: Box<Self>) {
+        // TODO: do not unwrap here
+        // self.command_tx.send(ThreadCommand::Resume).unwrap();
     }
 
     fn stop(self: Box<Self>) {

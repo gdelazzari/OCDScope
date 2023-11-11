@@ -16,6 +16,19 @@ pub use memsampler::MemSampler;
 
 pub type Sample = (u64, Vec<(u32, f64)>);
 
+pub enum Status {
+    Initializing,
+    Sampling,
+    Paused,
+    Terminated,
+}
+
+pub enum Notification {
+    NewStatus(Status),
+    Info(String),
+    Error(String),
+}
+
 pub trait Sampler {
     fn available_signals(&self) -> Vec<(u32, String)>;
     fn set_active_signals(&self, ids: &[u32]);
@@ -23,5 +36,9 @@ pub trait Sampler {
     // TODO: (easy optimization) do not send dynamically allocated Vec<_>
     fn sampled_channel(&self) -> &mpsc::Receiver<Sample>;
 
+    fn notification_channel(&self) -> &mpsc::Receiver<Notification>;
+
+    fn pause(self: Box<Self>);
+    fn resume(self: Box<Self>);
     fn stop(self: Box<Self>);
 }

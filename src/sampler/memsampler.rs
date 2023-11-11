@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::gdbremote::{self, GDBRemote};
-use crate::sampler::{Sample, Sampler};
+use crate::sampler::{Notification, Sample, Sampler, Status};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
@@ -23,6 +23,7 @@ pub struct MemSampler {
     join_handle: thread::JoinHandle<()>,
     command_tx: mpsc::Sender<ThreadCommand>,
     sampled_rx: mpsc::Receiver<Sample>,
+    notifications_rx: mpsc::Receiver<Notification>,
     available_elf_symbols: Vec<(u32, String)>,
 }
 
@@ -34,6 +35,7 @@ impl MemSampler {
     ) -> MemSampler {
         let (sampled_tx, sampled_rx) = mpsc::sync_channel(SAMPLE_BUFFER_SIZE);
         let (command_tx, command_rx) = mpsc::channel();
+        let (notifications_tx, notifications_rx) = mpsc::channel();
 
         let address = address.to_socket_addrs().unwrap().next().unwrap();
 
@@ -74,6 +76,7 @@ impl MemSampler {
             join_handle,
             command_tx,
             sampled_rx,
+            notifications_rx,
             available_elf_symbols,
         };
 
@@ -87,6 +90,7 @@ impl Sampler for MemSampler {
     }
 
     fn set_active_signals(&self, ids: &[u32]) {
+        // TODO: do not unwrap here
         self.command_tx
             .send(ThreadCommand::SetActiveAddresses(ids.to_vec()))
             .unwrap();
@@ -94,6 +98,20 @@ impl Sampler for MemSampler {
 
     fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
         &self.sampled_rx
+    }
+
+    fn notification_channel(&self) -> &mpsc::Receiver<Notification> {
+        &self.notifications_rx
+    }
+
+    fn pause(self: Box<Self>) {
+        // TODO: do not unwrap here
+        // self.command_tx.send(ThreadCommand::Pause).unwrap();
+    }
+
+    fn resume(self: Box<Self>) {
+        // TODO: do not unwrap here
+        // self.command_tx.send(ThreadCommand::Resume).unwrap();
     }
 
     fn stop(self: Box<Self>) {
