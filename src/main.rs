@@ -150,6 +150,15 @@ impl eframe::App for OCDScope {
 
                             debug_assert!(self.current_sampler.is_none());
                         }
+
+                        // TODO: enable/disable buttons based on current state, or only show one
+                        // TODO: fancy icons
+                        if toolbar.button("Pause").clicked() {
+                            self.current_sampler.as_ref().unwrap().pause();
+                        }
+                        if toolbar.button("Resume").clicked() {
+                            self.current_sampler.as_ref().unwrap().resume();
+                        }
                     }
                 });
             });
