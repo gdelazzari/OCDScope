@@ -44,6 +44,10 @@ struct OCDScope {
     show_connect_dialog: bool,
     show_add_address_dialog: bool,
 
+    show_error_dialog: bool,
+    error_title: String,
+    error_message: String,
+
     plot_auto_follow: bool,
     plot_auto_follow_time: ParsableFloat,
 
@@ -52,6 +56,8 @@ struct OCDScope {
 
     sampling_method: SamplingMethod,
     current_sampler: Option<Box<dyn Sampler>>,
+    current_sampler_status: Option<sampler::Status>,
+    last_sampler_info: String,
     signals: Vec<SignalConfig>,
     samples: HashMap<u32, SampleBuffer>,
     max_time: u64,
@@ -71,11 +77,16 @@ impl OCDScope {
         OCDScope {
             show_connect_dialog: true,
             show_add_address_dialog: false,
+            show_error_dialog: false,
+            error_title: "".into(),
+            error_message: "".into(),
             plot_auto_follow: false,
             plot_auto_follow_time: 1.0.into(),
             buffer_auto_truncate: true,
             buffer_auto_truncate_at: 10.0.into(),
             current_sampler: None,
+            current_sampler_status: None,
+            last_sampler_info: "".into(),
             samples: HashMap::new(),
             max_time: 0,
             sampling_method: SamplingMethod::Simulated,
@@ -96,18 +107,64 @@ impl OCDScope {
     }
 
     fn any_dialog_visible(&self) -> bool {
-        self.show_add_address_dialog || self.show_connect_dialog
+        self.show_add_address_dialog || self.show_connect_dialog || self.show_error_dialog
+    }
+
+    fn show_error(&mut self, title: String, message: String) {
+        self.error_title = title;
+        self.error_message = message;
+        self.show_error_dialog = true;
     }
 
     fn close_all_dialogs(&mut self) {
         self.show_add_address_dialog = false;
         self.show_connect_dialog = false;
+        self.show_error_dialog = false;
     }
 }
 
 impl eframe::App for OCDScope {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut sampler_terminated = false;
+
         if let Some(sampler) = &self.current_sampler {
+            while let Ok(notification) = sampler.notification_channel().try_recv() {
+                match notification {
+                    sampler::Notification::NewStatus(status) => {
+                        self.current_sampler_status = Some(status);
+
+                        if status == sampler::Status::Terminated {
+                            sampler_terminated = true;
+                        }
+                    }
+                    sampler::Notification::Info(message) => {
+                        self.last_sampler_info = message;
+                    }
+                    sampler::Notification::Error(message) => {
+                        if !self.show_error_dialog {
+                            self.error_title = "Sampler error".into();
+                            self.error_message = message;
+                            self.show_error_dialog = true;
+                        } else {
+                            log::warn!("Sampler error detected, but error dialog already open");
+                        }
+                    }
+                }
+            }
+        }
+
+        if sampler_terminated {
+            debug_assert!(self.current_sampler.is_some());
+
+            let sampler = self.current_sampler.take().unwrap();
+            sampler.stop();
+
+            debug_assert!(self.current_sampler.is_none());
+        }
+
+        if let Some(sampler) = &self.current_sampler {
+            debug_assert!(!sampler_terminated);
+
             while let Ok((t, samples)) = sampler.sampled_channel().try_recv() {
                 for (id, y) in samples.into_iter() {
                     self.samples
@@ -159,6 +216,13 @@ impl eframe::App for OCDScope {
                         if toolbar.button("Resume").clicked() {
                             self.current_sampler.as_ref().unwrap().resume();
                         }
+
+                        // TODO: fancy icons
+                        if let Some(status) = self.current_sampler_status {
+                            toolbar.label(format!("{:?}", status));
+                        }
+
+                        toolbar.label(&self.last_sampler_info);
                     }
                 });
             });
@@ -586,6 +650,18 @@ impl eframe::App for OCDScope {
                             self.show_connect_dialog = false;
                         }
                     });
+                });
+        }
+
+        if self.show_error_dialog {
+            egui::Window::new(&self.error_title)
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(&self.error_message);
+                    if ui.button("Close").clicked() {
+                        self.show_error_dialog = false;
+                    }
                 });
         }
     }

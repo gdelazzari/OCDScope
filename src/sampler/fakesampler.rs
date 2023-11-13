@@ -89,7 +89,7 @@ impl Sampler for FakeSampler {
 
     fn stop(self: Box<Self>) {
         if let Err(err) = self.command_tx.send(ThreadCommand::Stop) {
-            log::warn!("asked to stop sampler but thread seems to already be dead (command send failed: {:?})", err);
+            log::debug!("asked to stop sampler but thread seems to already be dead (command send failed: {:?})", err);
 
             debug_assert!(self.join_handle.is_finished());
         }
