@@ -1,4 +1,4 @@
-use std::{panic::catch_unwind, sync::mpsc, thread, time::Duration};
+use std::{sync::mpsc, thread, time::Duration};
 
 use crate::sampler::{Notification, Sample, Sampler, Status};
 
@@ -107,7 +107,7 @@ fn sampler_thread(
     sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
     notifications_tx: mpsc::Sender<Notification>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     use std::time::Instant;
 
     let period = Duration::from_secs_f64(1.0 / rate);
@@ -172,7 +172,7 @@ fn sampler_thread(
                         }
                     }
                     Err(err) => {
-                        return Err(Box::new(err));
+                        anyhow::bail!("Closed TX end of command channel ({})", err);
                     }
                 }
             }
@@ -192,7 +192,7 @@ fn sampler_thread(
                     log::warn!("Unexpected command in paused state: {:?}", other);
                 }
                 Err(err) => {
-                    return Err(Box::new(err));
+                    anyhow::bail!("Closed TX end of command channel ({})", err);
                 }
             },
             Status::Terminated => {
