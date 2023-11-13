@@ -121,10 +121,8 @@ impl OCDScope {
         self.show_connect_dialog = false;
         self.show_error_dialog = false;
     }
-}
 
-impl eframe::App for OCDScope {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn handle_messages(&mut self, ctx: &egui::Context) {
         let mut sampler_terminated = false;
 
         if let Some(sampler) = &self.current_sampler {
@@ -187,6 +185,12 @@ impl eframe::App for OCDScope {
             // TODO: might use `request_repaint_after` to reduce CPU usage
             ctx.request_repaint();
         }
+    }
+}
+
+impl eframe::App for OCDScope {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_messages(ctx);
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             if self.any_dialog_visible() {
