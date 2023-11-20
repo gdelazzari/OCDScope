@@ -186,6 +186,47 @@ impl OCDScope {
             ctx.request_repaint();
         }
     }
+
+    fn try_connect_sampler(&mut self) -> anyhow::Result<Box<dyn Sampler>> {
+        let sample_rate = self.sample_rate_string.parse::<f64>();
+        let rtt_polling_interval = self.rtt_polling_interval_string.parse::<u32>();
+
+        let sampler: Box<dyn Sampler> = match self.sampling_method {
+            SamplingMethod::Simulated => Box::new(FakeSampler::start(sample_rate?)),
+            SamplingMethod::MemorySamping => Box::new(MemSampler::start(
+                &self.gdb_address,
+                sample_rate?,
+                self.elf_filename.clone(),
+            )),
+            SamplingMethod::RTT => Box::new(RTTSampler::start(
+                &self.telnet_address,
+                rtt_polling_interval?,
+            )?),
+        };
+
+        self.reset_buffer();
+
+        // we expect that there is currently no sampler active, we assert
+        // this in debug mode and try to fix the incident in release mode
+        debug_assert!(self.current_sampler.is_none());
+        if let Some(previous_sampler) = self.current_sampler.take() {
+            previous_sampler.stop();
+            // TODO: report and log this event as a warning
+        }
+
+        self.signals = sampler
+            .available_signals()
+            .into_iter()
+            .map(|(id, name)| SignalConfig::new(id, name))
+            .collect();
+
+        if let Some(first) = self.signals.iter_mut().next() {
+            first.enabled = true;
+            sampler.set_active_signals(&[first.id]);
+        }
+
+        Ok(sampler)
+    }
 }
 
 impl eframe::App for OCDScope {
@@ -593,69 +634,22 @@ impl eframe::App for OCDScope {
                             self.show_connect_dialog = false;
                         }
                         if ui.button("Connect").clicked() {
-                            let sample_rate = self.sample_rate_string.parse::<f64>();
-                            let rtt_polling_interval =
-                                self.rtt_polling_interval_string.parse::<u32>();
-
-                            // FIXME/TODO: gracefully handle parsing error on sampling rate
-                            let sampler: Box<dyn Sampler> = match self.sampling_method {
-                                SamplingMethod::Simulated => Box::new(FakeSampler::start(
-                                    sample_rate.expect("Failed to parse sample rate"),
-                                )),
-                                SamplingMethod::MemorySamping => Box::new(MemSampler::start(
-                                    &self.gdb_address,
-                                    sample_rate.expect("Failed to parse sample rate"),
-                                    self.elf_filename.clone(),
-                                )),
-                                SamplingMethod::RTT => Box::new(
-                                    RTTSampler::start(
-                                        &self.telnet_address,
-                                        rtt_polling_interval
-                                            .expect("Failed to parse polling interval"),
-                                    )
-                                    .unwrap(),
-                                ),
-                            };
-
-                            self.reset_buffer();
-
-                            // we expect that there is currently no sampler active, we assert
-                            // this in debug mode and try to fix the incident in release mode
                             debug_assert!(self.current_sampler.is_none());
-                            if let Some(previous_sampler) = self.current_sampler.take() {
-                                previous_sampler.stop();
-                                // TODO: report and log this event as a warning
-                            }
-
-                            self.signals = sampler
-                                .available_signals()
-                                .into_iter()
-                                .map(|(id, name)| SignalConfig::new(id, name))
-                                .collect();
-
-                            if let Some(first) = self.signals.iter_mut().next() {
-                                first.enabled = true;
-                                sampler.set_active_signals(&[first.id]);
-                            }
-
-                            /*
-                            // TEMP: used for debug of export with simulated data
-
-                            for signal in self.signals.iter_mut() {
-                                signal.enabled = true;
-                            }
-                            sampler.set_active_signals(
-                                &self
-                                    .signals
-                                    .iter()
-                                    .map(|signal| signal.id)
-                                    .collect::<Vec<_>>(),
-                            );
-                            */
-
-                            self.current_sampler = Some(sampler);
 
                             self.show_connect_dialog = false;
+
+                            match self.try_connect_sampler() {
+                                Ok(sampler) => {
+                                    self.current_sampler = Some(sampler);
+                                }
+                                Err(err) => {
+                                    log::error!("failed to start sampler {:?}", err);
+                                    self.show_error(
+                                        "Failed to start sampler".to_string(),
+                                        format!("{:?}", err),
+                                    );
+                                }
+                            }
                         }
                     });
                 });
