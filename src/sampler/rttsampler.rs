@@ -353,7 +353,7 @@ fn sampler_thread(
 
     openocd
         .rtt_server_stop(rtt_channel_tcp_port)
-        .context("failed to stop RTT server");
+        .context("failed to stop RTT server")?;
 
     Ok(())
 }
