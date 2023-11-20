@@ -5,9 +5,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context;
+
 use crate::{
     openocd,
-    sampler::{Sample, Sampler, Notification, Status},
+    sampler::{Notification, Sample, Sampler, Status},
 };
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
@@ -32,6 +34,8 @@ const SAMPLE_BUFFER_SIZE: usize = 1024;
 //   samples/s of sampling rate, maxing out CPU usage
 
 enum ThreadCommand {
+    Pause,
+    Resume,
     Stop,
 }
 
@@ -44,7 +48,10 @@ pub struct RTTSampler {
 }
 
 impl RTTSampler {
-    pub fn start<A: ToSocketAddrs + Clone>(telnet_address: A, polling_interval: u32) -> RTTSampler {
+    pub fn start<A: ToSocketAddrs + Clone>(
+        telnet_address: A,
+        polling_interval: u32,
+    ) -> anyhow::Result<RTTSampler> {
         let (sampled_tx, sampled_rx) = mpsc::sync_channel(SAMPLE_BUFFER_SIZE);
         let (command_tx, command_rx) = mpsc::channel();
         let (notifications_tx, notifications_rx) = mpsc::channel();
@@ -56,40 +63,57 @@ impl RTTSampler {
         // the protocol, and not checking what's happening, thus not trying to recover
         // unexpected conditions, and not reporting potentially useful errors to the user
 
-        let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone()).unwrap();
+        let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone())
+            .context("failed to connect Telnet interface")?;
 
         // ensure previously configured RTT servers are stopped
-        openocd.rtt_stop().unwrap();
+        openocd
+            .rtt_stop()
+            .context("failed to issue RTT stop command")?;
 
         // setup and start RTT
         // TODO: make the following settings configurable
         openocd.set_timeout(Duration::from_millis(2000));
-        openocd.rtt_setup(0x20000000, 128 * 1024, "SEGGER RTT").unwrap();
-        let rtt_block_address = openocd.rtt_start().unwrap();
+        openocd
+            .rtt_setup(0x20000000, 128 * 1024, "SEGGER RTT")
+            .context("failed to setup RTT")?;
+        let rtt_block_address = openocd.rtt_start().context("failed to start RTT")?;
         log::debug!("found RTT control block at 0x{:08X}", rtt_block_address);
 
         // ask 1GHz probe clock, to likely obtain the maximum one
-        openocd.set_adapter_speed(1_000_000).unwrap();
+        let actual_speed = openocd
+            .set_adapter_speed(1_000_000)
+            .context("failed to set adapter speed")?;
+        log::info!("actual adapter speed {}", actual_speed); // TODO: print unit
 
         // set RTT polling interval
-        openocd.set_rtt_polling_interval(polling_interval).unwrap();
+        openocd
+            .set_rtt_polling_interval(polling_interval)
+            .context("failed to set RTT polling interval")?;
 
         // find a suitable scope channel
         // TODO: we could handle multiple RTT channels, in the future, if wanted
-        let available_rtt_channels = openocd.rtt_channels().unwrap();
+        let available_rtt_channels = openocd
+            .rtt_channels()
+            .context("failed to get RTT channels")?;
         let mut candidate_scope_channels = available_rtt_channels.iter().filter(|channel| {
             // TODO: better detection logic
             channel.direction == openocd::RTTChannelDirection::Up
                 && channel.name.to_lowercase().contains("scope")
         });
-        let rtt_channel = candidate_scope_channels.next().unwrap();
+        let rtt_channel = candidate_scope_channels
+            .next()
+            .context("no suitable RTT channels found")?;
+
         log::debug!("picked RTT channel {:?}", rtt_channel);
         let rtt_channel_id = rtt_channel.id;
         let rtt_channel_buffer_size = rtt_channel.buffer_size as usize;
 
         // from the channel name obtained while listing channels, figure out
         // which signals are available and fill up the array
-        let packet_structure = parse_scope_packet_structure(&rtt_channel.name).unwrap();
+        let packet_structure = parse_scope_packet_structure(&rtt_channel.name)
+            .context("failed to parse RTT channel name into a packet structure")?;
+
         log::debug!("parsed scope packet structure {:?}", packet_structure);
 
         let available_signals = packet_structure
@@ -111,7 +135,7 @@ impl RTTSampler {
         let telnet_address = telnet_address.to_socket_addrs().unwrap().next().unwrap();
 
         let join_handle = thread::spawn(move || {
-            sampler_thread(
+            let result = sampler_thread(
                 telnet_address,
                 rtt_channel_id,
                 rtt_channel_buffer_size,
@@ -119,7 +143,22 @@ impl RTTSampler {
                 polling_interval,
                 sampled_tx,
                 command_rx,
-            )
+                notifications_tx.clone(),
+            );
+
+            if let Err(err) = result {
+                log::error!("sampler thread returned with error {:?}", err);
+                log::debug!("sending error notification and switch to terminated state");
+
+                // ignore the send errors instead of unwrapping, at this point if even sending to
+                // `notifications_tx` fails, the situation is sort of unrecoverable
+                if let Err(e) = notifications_tx.send(Notification::Error(format!("{:?}", err))) {
+                    log::error!("error notification send failed: {:?}", e);
+                }
+                if let Err(e) = notifications_tx.send(Notification::NewStatus(Status::Terminated)) {
+                    log::error!("new status notification send failed: {:?}", e);
+                }
+            }
         });
 
         let sampler = RTTSampler {
@@ -130,7 +169,7 @@ impl RTTSampler {
             available_signals,
         };
 
-        sampler
+        Ok(sampler)
     }
 }
 
@@ -146,19 +185,19 @@ impl Sampler for RTTSampler {
     fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
         &self.sampled_rx
     }
-        
+
     fn notification_channel(&self) -> &mpsc::Receiver<Notification> {
         &self.notifications_rx
     }
 
     fn pause(&self) {
         // TODO: do not unwrap here
-        // self.command_tx.send(ThreadCommand::Pause).unwrap();
+        self.command_tx.send(ThreadCommand::Pause).unwrap();
     }
 
     fn resume(&self) {
         // TODO: do not unwrap here
-        // self.command_tx.send(ThreadCommand::Resume).unwrap();
+        self.command_tx.send(ThreadCommand::Resume).unwrap();
     }
 
     fn stop(self: Box<Self>) {
@@ -175,13 +214,15 @@ fn sampler_thread(
     polling_interval: u32,
     sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
-) {
+    notifications_tx: mpsc::Sender<Notification>,
+) -> anyhow::Result<()> {
     use std::io::Read;
 
     // TODO: handle and report errors of various kind, during initial connection
     // and handshake
 
-    let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone()).unwrap();
+    let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone())
+        .context("failed to connect Telnet interface in sampler thread")?;
 
     // TODO:
     // - handle failure of RTT TCP channel opening, which can happen for various
@@ -190,7 +231,7 @@ fn sampler_thread(
     let rtt_channel_tcp_port = 9090;
     openocd
         .rtt_server_start(rtt_channel_tcp_port, rtt_channel_id)
-        .unwrap();
+        .context("failed to start RTT server")?;
 
     let rtt_channel_tcp_address = SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::new(127, 0, 0, 1),
@@ -200,7 +241,8 @@ fn sampler_thread(
     let polling_period = Duration::from_millis(polling_interval as u64);
 
     let mut rtt_channel =
-        TcpStream::connect(rtt_channel_tcp_address).expect("Failed to connect to TCP stream");
+        TcpStream::connect(rtt_channel_tcp_address).context("failed to connect to TCP stream")?;
+
     log::info!("RTT TCP stream connected");
 
     // synchronize the channel: pause the target, ensure the stream is empty, then
@@ -210,13 +252,13 @@ fn sampler_thread(
         match openocd.halt() {
             // on timeout, we assume the target is already halted
             Ok(_) | Err(openocd::TelnetInterfaceError::Timeout) => {}
-            Err(err) => panic!("{}", err),
+            Err(err) => anyhow::bail!("{}", err),
         }
 
         // empty the RTT channel
         rtt_channel
             .set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
+            .context("failed to set read timeout on RTT channel")?;
         loop {
             let mut throwaway = [0; 4096];
             match rtt_channel.read(&mut throwaway) {
@@ -227,19 +269,21 @@ fn sampler_thread(
                     break;
                 }
                 Err(err) => {
-                    panic!("RTT channel sync: error {:?}", err);
+                    anyhow::bail!("RTT channel sync: error {:?}", err);
                 }
             }
         }
 
-        openocd.resume().unwrap();
+        openocd.resume().context("failed to resume target")?;
     }
 
     let packet_size = packet_structure.packet_size();
 
     let mut buffer = Vec::new();
 
-    rtt_channel.set_read_timeout(Some(polling_period)).unwrap();
+    rtt_channel
+        .set_read_timeout(Some(polling_period))
+        .context("failed to set read timeout on RTT channel")?;
 
     let mut previous_rate_measurement_instant = Instant::now();
     let mut rate_measurement_samples_received = 0;
@@ -250,8 +294,11 @@ fn sampler_thread(
             Ok(ThreadCommand::Stop) => {
                 break;
             }
+            Ok(_) => unimplemented!(),
             Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => panic!("Thread command channel closed TX end"),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                anyhow::bail!("thread command channel closed TX end")
+            }
         }
 
         let mut read_buffer = vec![0; rtt_channel_buffer_size];
@@ -271,11 +318,12 @@ fn sampler_thread(
         while buffer.len() >= packet_size {
             let to_decode = &buffer[..packet_size];
 
-            // TODO: handle errors
-            let (maybe_timestamp, values) = packet_structure.decode_bytes(to_decode).unwrap();
+            let (maybe_timestamp, values) = packet_structure
+                .decode_bytes(to_decode)
+                .context("packet decode failed")?;
 
-            // TODO: handle time not provided
-            let timestamp = maybe_timestamp.unwrap() as u64;
+            // if no timestamp is provided, also fail
+            let timestamp = maybe_timestamp.context("timestamp not provided")? as u64;
 
             let samples = values
                 .into_iter()
@@ -285,7 +333,8 @@ fn sampler_thread(
 
             sampled_tx
                 .send((timestamp, samples))
-                .expect("Failed to send sampled value");
+                .context("failed to send sampled value")?;
+
             rate_measurement_samples_received += 1;
 
             buffer = buffer[packet_size..].to_vec();
@@ -302,7 +351,11 @@ fn sampler_thread(
         }
     }
 
-    openocd.rtt_server_stop(rtt_channel_tcp_port).unwrap();
+    openocd
+        .rtt_server_stop(rtt_channel_tcp_port)
+        .context("failed to stop RTT server");
+
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -403,9 +456,9 @@ impl RTTScopePacketStructure {
                 bytes = &bytes[field.size as usize..];
                 field.decode(to_decode)
             })
-            .collect::<Option<Vec<f32>>>();
+            .collect::<Option<Vec<f32>>>()?;
 
-        Some((time, values?))
+        Some((time, values))
     }
 }
 

@@ -607,10 +607,14 @@ impl eframe::App for OCDScope {
                                     sample_rate.expect("Failed to parse sample rate"),
                                     self.elf_filename.clone(),
                                 )),
-                                SamplingMethod::RTT => Box::new(RTTSampler::start(
-                                    &self.telnet_address,
-                                    rtt_polling_interval.expect("Failed to parse polling interval"),
-                                )),
+                                SamplingMethod::RTT => Box::new(
+                                    RTTSampler::start(
+                                        &self.telnet_address,
+                                        rtt_polling_interval
+                                            .expect("Failed to parse polling interval"),
+                                    )
+                                    .unwrap(),
+                                ),
                             };
 
                             self.reset_buffer();
