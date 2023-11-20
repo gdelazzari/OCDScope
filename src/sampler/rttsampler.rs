@@ -1,4 +1,5 @@
 use std::{
+    io::Read,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream, ToSocketAddrs},
     sync::mpsc,
     thread,
@@ -216,8 +217,6 @@ fn sampler_thread(
     command_rx: mpsc::Receiver<ThreadCommand>,
     notifications_tx: mpsc::Sender<Notification>,
 ) -> anyhow::Result<()> {
-    use std::io::Read;
-
     // TODO: handle and report errors of various kind, during initial connection
     // and handshake
 
@@ -245,37 +244,10 @@ fn sampler_thread(
 
     log::info!("RTT TCP stream connected");
 
-    // synchronize the channel: pause the target, ensure the stream is empty, then
-    // resume; the RTT writes in the ring-buffer are atomic, so this should work
+    // synchronize the channel (pause the target, ensure the stream is empty, then
+    // resume; the RTT writes in the ring-buffer are atomic, so this should work)
     // TODO: we could design an online auto-sync algorithm to avoid this
-    {
-        match openocd.halt() {
-            // on timeout, we assume the target is already halted
-            Ok(_) | Err(openocd::TelnetInterfaceError::Timeout) => {}
-            Err(err) => anyhow::bail!("{}", err),
-        }
-
-        // empty the RTT channel
-        rtt_channel
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .context("failed to set read timeout on RTT channel")?;
-        loop {
-            let mut throwaway = [0; 4096];
-            match rtt_channel.read(&mut throwaway) {
-                Ok(0) => log::debug!("RTT channel sync: read 0 bytes (?)"),
-                Ok(n) => log::debug!("RTT channel sync: thrown away {} bytes", n),
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    log::info!("RTT channel sync: completed");
-                    break;
-                }
-                Err(err) => {
-                    anyhow::bail!("RTT channel sync: error {:?}", err);
-                }
-            }
-        }
-
-        openocd.resume().context("failed to resume target")?;
-    }
+    synchronize_rtt_channel(&mut openocd, &mut rtt_channel)?;
 
     let packet_size = packet_structure.packet_size();
 
@@ -498,4 +470,38 @@ fn parse_scope_packet_structure(channel_name: &str) -> Option<RTTScopePacketStru
     }
 
     Some(packet_structure)
+}
+
+fn synchronize_rtt_channel(
+    openocd: &mut openocd::TelnetInterface,
+    rtt_channel: &mut TcpStream,
+) -> anyhow::Result<()> {
+    match openocd.halt() {
+        // on timeout, we assume the target is already halted
+        Ok(_) | Err(openocd::TelnetInterfaceError::Timeout) => {}
+        Err(err) => anyhow::bail!("{}", err),
+    }
+
+    // empty the RTT channel
+    rtt_channel
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .context("failed to set read timeout on RTT channel")?;
+    loop {
+        let mut throwaway = [0; 4096];
+        match rtt_channel.read(&mut throwaway) {
+            Ok(0) => log::debug!("RTT channel sync: read 0 bytes (?)"),
+            Ok(n) => log::debug!("RTT channel sync: thrown away {} bytes", n),
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                log::info!("RTT channel sync: completed");
+                break;
+            }
+            Err(err) => {
+                anyhow::bail!("RTT channel sync: error {:?}", err);
+            }
+        }
+    }
+
+    openocd.resume().context("failed to resume target")?;
+
+    Ok(())
 }
