@@ -217,9 +217,6 @@ fn sampler_thread(
     command_rx: mpsc::Receiver<ThreadCommand>,
     notifications_tx: mpsc::Sender<Notification>,
 ) -> anyhow::Result<()> {
-    // TODO: handle and report errors of various kind, during initial connection
-    // and handshake
-
     let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone())
         .context("failed to connect Telnet interface in sampler thread")?;
 
