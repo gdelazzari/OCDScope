@@ -34,6 +34,7 @@ const SAMPLE_BUFFER_SIZE: usize = 1024;
 //   in which order those two things happened) and when resumed the sampler was spamming 0
 //   samples/s of sampling rate, maxing out CPU usage
 
+#[derive(Debug)]
 enum ThreadCommand {
     Pause,
     Resume,
@@ -217,6 +218,17 @@ fn sampler_thread(
     command_rx: mpsc::Receiver<ThreadCommand>,
     notifications_tx: mpsc::Sender<Notification>,
 ) -> anyhow::Result<()> {
+    let info = |message: &str| {
+        log::info!("{}", message);
+        if let Err(err) = notifications_tx.send(Notification::Info(message.to_string())) {
+            log::error!("Failed to send info notification: {:?}", err);
+        }
+    };
+
+    // "RTT TCP stream connected"
+
+    let mut status = Status::Initializing;
+
     let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone())
         .context("failed to connect Telnet interface in sampler thread")?;
 
@@ -239,90 +251,126 @@ fn sampler_thread(
     let mut rtt_channel =
         TcpStream::connect(rtt_channel_tcp_address).context("failed to connect to TCP stream")?;
 
-    log::info!("RTT TCP stream connected");
+    info("RTT TCP stream connected");
 
     // synchronize the channel (pause the target, ensure the stream is empty, then
     // resume; the RTT writes in the ring-buffer are atomic, so this should work)
     // TODO: we could design an online auto-sync algorithm to avoid this
     synchronize_rtt_channel(&mut openocd, &mut rtt_channel)?;
-
-    let packet_size = packet_structure.packet_size();
-
-    let mut buffer = Vec::new();
+    
+    info("RTT stream synchronized");
 
     rtt_channel
         .set_read_timeout(Some(polling_period))
         .context("failed to set read timeout on RTT channel")?;
 
+    let packet_size = packet_structure.packet_size();
+
+    let mut buffer = Vec::new();
+
     let mut previous_rate_measurement_instant = Instant::now();
     let mut rate_measurement_samples_received = 0;
 
     loop {
-        // 1. process commands, if any
-        match command_rx.try_recv() {
-            Ok(ThreadCommand::Stop) => {
+        let mut maybe_new_status = None;
+
+        match status {
+            Status::Initializing => {
+                previous_rate_measurement_instant = Instant::now();
+                maybe_new_status = Some(Status::Sampling);
+            }
+            Status::Sampling | Status::Paused => {
+                // 1. process commands, if any
+                match command_rx.try_recv() {
+                    Ok(ThreadCommand::Stop) => {
+                        break;
+                    }
+                    Ok(ThreadCommand::Pause) if matches!(status, Status::Sampling) => {
+                        maybe_new_status = Some(Status::Paused);
+                    }
+                    Ok(ThreadCommand::Resume) if matches!(status, Status::Paused) => {
+                        maybe_new_status = Some(Status::Sampling);
+                    }
+                    Ok(other) => {
+                        log::warn!("Unexpected command in state {:?}: {:?}", status, other);
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        anyhow::bail!("thread command channel closed TX end")
+                    }
+                }
+
+                let mut read_buffer = vec![0; rtt_channel_buffer_size];
+
+                let read_result = rtt_channel.read(&mut read_buffer);
+
+                match read_result {
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(err) => log::error!("RTT channel read error: {:?}", err),
+                    Ok(n) if n == 0 => log::warn!("RTT channel read 0 bytes"),
+                    Ok(n) if n > 0 => {
+                        buffer.extend_from_slice(&read_buffer[0..n]);
+                    }
+                    _ => unreachable!(),
+                }
+
+                while buffer.len() >= packet_size {
+                    let to_decode = &buffer[..packet_size];
+
+                    // only parse and send samples if the current status is `Sampling`
+                    if matches!(status, Status::Sampling) {
+                        let (maybe_timestamp, values) = packet_structure
+                            .decode_bytes(to_decode)
+                            .context("packet decode failed")?;
+
+                        // if no timestamp is provided, also fail
+                        let timestamp = maybe_timestamp.context("timestamp not provided")? as u64;
+
+                        let samples = values
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, y)| (i as u32, y as f64))
+                            .collect::<Vec<(u32, f64)>>();
+
+                        sampled_tx
+                            .send((timestamp, samples))
+                            .context("failed to send sampled value")?;
+                    }
+
+                    rate_measurement_samples_received += 1;
+
+                    buffer = buffer[packet_size..].to_vec();
+                }
+
+                let now = Instant::now();
+                if now - previous_rate_measurement_instant >= Duration::from_secs(1) {
+                    let measured_rate = rate_measurement_samples_received as f64
+                        / (now - previous_rate_measurement_instant).as_secs_f64();
+                    log::info!("measured rate {} samples/s", measured_rate);
+
+                    rate_measurement_samples_received = 0;
+                    previous_rate_measurement_instant = now;
+                }
+            }
+            Status::Terminated => {
+                // stop the RTT server
+                openocd
+                    .rtt_server_stop(rtt_channel_tcp_port)
+                    .context("failed to stop RTT server")?;
+
+                // break the main loop, finishing this thread
                 break;
             }
-            Ok(_) => unimplemented!(),
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                anyhow::bail!("thread command channel closed TX end")
+        }
+
+        match maybe_new_status {
+            Some(new_status) if new_status != status => {
+                notifications_tx.send(Notification::NewStatus(new_status))?;
+                status = new_status;
             }
-        }
-
-        let mut read_buffer = vec![0; rtt_channel_buffer_size];
-
-        let read_result = rtt_channel.read(&mut read_buffer);
-
-        match read_result {
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(err) => log::error!("RTT channel read error: {:?}", err),
-            Ok(n) if n == 0 => log::warn!("RTT channel read 0 bytes"),
-            Ok(n) if n > 0 => {
-                buffer.extend_from_slice(&read_buffer[0..n]);
-            }
-            _ => unreachable!(),
-        }
-
-        while buffer.len() >= packet_size {
-            let to_decode = &buffer[..packet_size];
-
-            let (maybe_timestamp, values) = packet_structure
-                .decode_bytes(to_decode)
-                .context("packet decode failed")?;
-
-            // if no timestamp is provided, also fail
-            let timestamp = maybe_timestamp.context("timestamp not provided")? as u64;
-
-            let samples = values
-                .into_iter()
-                .enumerate()
-                .map(|(i, y)| (i as u32, y as f64))
-                .collect::<Vec<(u32, f64)>>();
-
-            sampled_tx
-                .send((timestamp, samples))
-                .context("failed to send sampled value")?;
-
-            rate_measurement_samples_received += 1;
-
-            buffer = buffer[packet_size..].to_vec();
-        }
-
-        let now = Instant::now();
-        if now - previous_rate_measurement_instant >= Duration::from_secs(1) {
-            let measured_rate = rate_measurement_samples_received as f64
-                / (now - previous_rate_measurement_instant).as_secs_f64();
-            log::info!("measured rate {} samples/s", measured_rate);
-
-            rate_measurement_samples_received = 0;
-            previous_rate_measurement_instant = now;
+            _ => {}
         }
     }
-
-    openocd
-        .rtt_server_stop(rtt_channel_tcp_port)
-        .context("failed to stop RTT server")?;
 
     Ok(())
 }
