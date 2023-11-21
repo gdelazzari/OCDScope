@@ -12,6 +12,7 @@ use crate::sampler::{Notification, Sample, Sampler, Status};
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
 // TODO:
+// - handle pause and resume messages
 // - maximize probe clock
 
 enum ThreadCommand {
