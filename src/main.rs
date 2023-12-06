@@ -678,6 +678,8 @@ fn main() {
 
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(800.0, 600.0)),
+        default_theme: eframe::Theme::Dark,
+        follow_system_theme: false,
         ..Default::default()
     };
 
