@@ -58,7 +58,7 @@ impl TelnetInterface {
         let now = Instant::now();
 
         if timeout_at < now {
-            log::warn!("early return due to `timeout_at` in the past");
+            log::debug!("early return due to `timeout_at` in the past");
             return Err(TelnetInterfaceError::Timeout);
         }
 
