@@ -203,8 +203,17 @@ impl Sampler for RTTSampler {
     }
 
     fn stop(self: Box<Self>) {
-        self.command_tx.send(ThreadCommand::Stop).unwrap();
-        self.join_handle.join().unwrap();
+        if let Err(err) = self.command_tx.send(ThreadCommand::Stop) {
+            log::debug!("asked to stop sampler but thread seems to already be dead (command send failed: {:?})", err);
+
+            debug_assert!(self.join_handle.is_finished());
+        }
+
+        // TODO: if there are implementation errors in the sampler thread, and the Stop command is not processed,
+        // this can block indefinitely
+        if let Err(err) = self.join_handle.join() {
+            log::warn!("failed to join sampler thread: {:?}", err);
+        }
     }
 }
 
