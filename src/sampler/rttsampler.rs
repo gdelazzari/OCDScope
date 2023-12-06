@@ -266,7 +266,7 @@ fn sampler_thread(
     // resume; the RTT writes in the ring-buffer are atomic, so this should work)
     // TODO: we could design an online auto-sync algorithm to avoid this
     synchronize_rtt_channel(&mut openocd, &mut rtt_channel)?;
-    
+
     info("RTT stream synchronized");
 
     rtt_channel
@@ -313,8 +313,9 @@ fn sampler_thread(
 
                 let read_result = rtt_channel.read(&mut read_buffer);
 
+                use std::io::ErrorKind;
                 match read_result {
-                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(err) if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut => {}
                     Err(err) => log::error!("RTT channel read error: {:?}", err),
                     Ok(n) if n == 0 => log::warn!("RTT channel read 0 bytes"),
                     Ok(n) if n > 0 => {
@@ -542,12 +543,17 @@ fn synchronize_rtt_channel(
     rtt_channel
         .set_read_timeout(Some(Duration::from_millis(100)))
         .context("failed to set read timeout on RTT channel")?;
+
     loop {
         let mut throwaway = [0; 4096];
+
+        use std::io::ErrorKind;
         match rtt_channel.read(&mut throwaway) {
             Ok(0) => log::debug!("RTT channel sync: read 0 bytes (?)"),
             Ok(n) => log::debug!("RTT channel sync: thrown away {} bytes", n),
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(err)
+                if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut =>
+            {
                 log::info!("RTT channel sync: completed");
                 break;
             }
