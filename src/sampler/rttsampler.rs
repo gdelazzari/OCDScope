@@ -532,7 +532,9 @@ fn synchronize_rtt_channel(
 ) -> anyhow::Result<()> {
     match openocd.halt() {
         // on timeout, we assume the target is already halted
-        Ok(_) | Err(openocd::TelnetInterfaceError::Timeout) => {}
+        Ok(_) | Err(openocd::TelnetInterfaceError::Timeout) => {
+            log::info!("target halt timed out, assuming target is already halted")
+        }
         Err(err) => anyhow::bail!("{}", err),
     }
 
