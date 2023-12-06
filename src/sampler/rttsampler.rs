@@ -317,7 +317,11 @@ fn sampler_thread(
                 match read_result {
                     Err(err) if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut => {}
                     Err(err) => log::error!("RTT channel read error: {:?}", err),
-                    Ok(n) if n == 0 => log::warn!("RTT channel read 0 bytes"),
+                    Ok(n) if n == 0 => {
+                        // TODO: it seems like, if the socket is closed from OpenOCD, this condition triggers
+                        //       (on Windows at least). Verify that we can detect that OpenOCD stopped with this.
+                        log::warn!("RTT channel read 0 bytes");
+                    },
                     Ok(n) if n > 0 => {
                         buffer.extend_from_slice(&read_buffer[0..n]);
                     }
