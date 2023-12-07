@@ -25,7 +25,7 @@ pub enum TelnetInterfaceError {
     TelnetError(#[from] telnet::TelnetError),
     #[error("Timeout error")]
     Timeout,
-    #[error("Unexpected response {:?}", String::from_utf8(.0.clone()))]
+    #[error("Unexpected response {:?}", String::from_utf8(.0.clone()).unwrap_or("<invalid UTF-8>".into()))]
     UnexpectedResponse(Vec<u8>),
 }
 
@@ -106,7 +106,10 @@ impl TelnetInterface {
 
                     debug_assert!(self.buffer.len() == previous_len - line.len());
 
-                    log::trace!("read line {:?}", String::from_utf8(line.clone()));
+                    log::trace!(
+                        "read line {:?}",
+                        String::from_utf8(line.clone()).unwrap_or("<invalid UTF-8>".into())
+                    );
 
                     // two backspaces are sent to erase the prompt '> ', print debug lines, and then
                     // put the prompt back
@@ -146,7 +149,7 @@ impl TelnetInterface {
         let line = format!("{}\r\n", command);
         let buffer = line.as_bytes().to_vec();
 
-        log::trace!("writing \"{}\"", line);
+        log::trace!("writing {:?}", line);
 
         self.connection.write(&buffer)?;
 
