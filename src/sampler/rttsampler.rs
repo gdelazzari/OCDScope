@@ -542,11 +542,14 @@ fn synchronize_rtt_channel(
     rtt_channel: &mut TcpStream,
 ) -> anyhow::Result<()> {
     match openocd.halt() {
-        // on timeout, we assume the target is already halted
-        Ok(_) | Err(openocd::TelnetInterfaceError::Timeout) => {
+        Ok(_) => {
+            log::debug!("target halted");
+        }
+        Err(openocd::TelnetInterfaceError::Timeout) => {
+            // on timeout, we assume the target is already halted
             log::warn!("target halt timed out, assuming target is already halted")
         }
-        Err(err) => anyhow::bail!("{}", err),
+        Err(err) => anyhow::bail!(err),
     }
 
     // empty the RTT channel
