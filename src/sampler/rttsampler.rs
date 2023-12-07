@@ -292,7 +292,7 @@ fn sampler_thread(
                 // 1. process commands, if any
                 match command_rx.try_recv() {
                     Ok(ThreadCommand::Stop) => {
-                        break;
+                        maybe_new_status = Some(Status::Terminated);
                     }
                     Ok(ThreadCommand::Pause) if matches!(status, Status::Sampling) => {
                         maybe_new_status = Some(Status::Paused);
