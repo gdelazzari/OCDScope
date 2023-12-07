@@ -145,6 +145,38 @@ impl TelnetInterface {
         }
     }
 
+    fn wait_line_with<P: Fn(&[u8]) -> bool>(
+        &mut self,
+        timeout_at: Instant,
+        predicate: P,
+    ) -> Result<Vec<u8>> {
+        let mut discarded_lines = Vec::new();
+
+        loop {
+            match self.read_line(timeout_at) {
+                Ok(mut line) => {
+                    if predicate(&line) {
+                        log::trace!("found line matching predicate");
+                        return Ok(line);
+                    } else {
+                        log::debug!("discarding line not matching predicate");
+                        discarded_lines.append(&mut line);
+                    }
+                }
+                Err(TelnetInterfaceError::Timeout) => {
+                    if discarded_lines.len() > 0 {
+                        // return the last line we received as an unexpected response error
+                        return Err(TelnetInterfaceError::UnexpectedResponse(discarded_lines));
+                    } else {
+                        // otherwise, if we never received a line, return a timeout error
+                        return Err(TelnetInterfaceError::Timeout);
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
     fn write_command(&mut self, command: &str, timeout_at: Instant) -> Result<()> {
         let line = format!("{}\r\n", command);
         let buffer = line.as_bytes().to_vec();
@@ -153,7 +185,7 @@ impl TelnetInterface {
 
         self.connection.write(&buffer)?;
 
-        self.expect_line_with(timeout_at, |echoed| echoed.ends_with(&buffer[..]))?;
+        self.wait_line_with(timeout_at, |echoed| echoed.ends_with(&buffer[..]))?;
 
         Ok(())
     }
@@ -203,11 +235,11 @@ impl TelnetInterface {
 
         self.write_command("rtt start", timeout_at)?;
 
-        self.expect_line_with(timeout_at, |line| {
+        self.wait_line_with(timeout_at, |line| {
             line.starts_with(b"rtt: Searching for control block")
         })?;
 
-        let line = self.expect_line_with(timeout_at, |line| {
+        let line = self.wait_line_with(timeout_at, |line| {
             line.starts_with(b"rtt: Control block found at ")
         })?;
 
@@ -235,6 +267,7 @@ impl TelnetInterface {
         let timeout_at = Instant::now() + self.timeout;
 
         self.wait_prompt(timeout_at)?;
+
         self.write_command("rtt channels", timeout_at)?;
 
         let mut lines = Vec::new();
@@ -264,7 +297,7 @@ impl TelnetInterface {
             timeout_at,
         )?;
 
-        self.expect_line_with(timeout_at, |line| line.starts_with(b"Listening on port"))?;
+        self.wait_line_with(timeout_at, |line| line.starts_with(b"Listening on port"))?;
 
         Ok(())
     }
@@ -306,7 +339,7 @@ impl TelnetInterface {
             break actual_speed;
         };
 
-        self.expect_line_with(timeout_at, |line| line == b"\r\n")?;
+        self.wait_line_with(timeout_at, |line| line == b"\r\n")?;
 
         Ok(actual_speed)
     }
@@ -331,7 +364,7 @@ impl TelnetInterface {
 
         self.write_command("halt", timeout_at)?;
 
-        self.expect_line_with(timeout_at, |line| {
+        self.wait_line_with(timeout_at, |line| {
             String::from_utf8(line.to_vec())
                 .map(|line| line.contains("halted due to debug-request"))
                 .unwrap_or(false)
@@ -344,6 +377,7 @@ impl TelnetInterface {
         let timeout_at = Instant::now() + self.timeout;
 
         self.wait_prompt(timeout_at)?;
+
         self.write_command("resume", timeout_at)?;
 
         Ok(())
