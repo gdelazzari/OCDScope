@@ -94,7 +94,7 @@ impl OCDScope {
             elf_filename: None,
             telnet_address: "127.0.0.1:4444".into(),
             sample_rate_string: "1000.0".into(),
-            rtt_polling_interval_string: "100".into(),
+            rtt_polling_interval_string: "1".into(),
             rtt_relative_time: false,
             signals: Vec::new(),
             memory_address_to_add_string: "BEEF1010".into(),
