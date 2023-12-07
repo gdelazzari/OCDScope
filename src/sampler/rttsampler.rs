@@ -315,7 +315,9 @@ fn sampler_thread(
 
                 use std::io::ErrorKind;
                 match read_result {
-                    Err(err) if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut => {}
+                    Err(err)
+                        if err.kind() == ErrorKind::WouldBlock
+                            || err.kind() == ErrorKind::TimedOut => {}
                     Err(err) => log::error!("RTT channel read error: {:?}", err),
                     Ok(n) if n == 0 => anyhow::bail!(
                         "RTT stream socket closed by remote end (OpenOCD terminated externally?)"
@@ -358,13 +360,23 @@ fn sampler_thread(
                 if now - previous_rate_measurement_instant >= Duration::from_secs(1) {
                     let measured_rate = rate_measurement_samples_received as f64
                         / (now - previous_rate_measurement_instant).as_secs_f64();
-                    log::info!("measured rate {} samples/s", measured_rate);
+
+                    log::debug!("measured rate {} samples/s", measured_rate);
+
+                    if let Err(err) = notifications_tx.send(Notification::Info(format!(
+                        "{} samples/s",
+                        measured_rate.round() as i64
+                    ))) {
+                        log::error!("Failed to send info notification: {:?}", err);
+                    }
 
                     rate_measurement_samples_received = 0;
                     previous_rate_measurement_instant = now;
                 }
             }
             Status::Terminated => {
+                log::info!("stopping RTT server");
+
                 // stop the RTT server
                 openocd
                     .rtt_server_stop(rtt_channel_tcp_port)
@@ -383,6 +395,8 @@ fn sampler_thread(
             _ => {}
         }
     }
+
+    log::info!("sampler thread gracefully finished");
 
     Ok(())
 }
@@ -536,7 +550,7 @@ fn synchronize_rtt_channel(
     match openocd.halt() {
         // on timeout, we assume the target is already halted
         Ok(_) | Err(openocd::TelnetInterfaceError::Timeout) => {
-            log::info!("target halt timed out, assuming target is already halted")
+            log::warn!("target halt timed out, assuming target is already halted")
         }
         Err(err) => anyhow::bail!("{}", err),
     }
@@ -556,7 +570,7 @@ fn synchronize_rtt_channel(
             Err(err)
                 if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut =>
             {
-                log::info!("RTT channel sync: completed");
+                log::info!("RTT channel sync completed");
                 break;
             }
             Err(err) => {
