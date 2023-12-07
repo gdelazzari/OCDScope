@@ -61,7 +61,7 @@ Finally, if you're using a development environment (like an Eclipse-based vendor
     - With memory sampling:
         1. Ensure the address and port for the GDB interface are correct.
         2. Choose a feasible sampling frequency. This depends on your MCU, probe and in general your hardware setup, and some experimentation might be required to find a stable value that can be achieved. Also take note that all specified variables will be sampled at this rate, so if you known that your hardware handles a maximum of 1000Hz of memory sampling rate _with one variable_, it will sample _at most_ at 500Hz with two variables.
-        3. Optionally load the ELF file of the firmware that is running on the microcontroller. The program will find all the 32-bit global symbols and suggest them as signals to be sampled in the main interface. If this step is skipped, or is not successful, variables to be sampled can be manually added through their memory address in the sidebar.
+        3. Optionally load the ELF file of the firmware that is running on the microcontroller. The program will find all the 32-bit global symbols and suggest them as float signals to be sampled in the main interface. If this step is skipped, or is not successful, variables to be sampled can be manually added through their memory address in the sidebar.
 5. Click on _Connect_ to start the sampling process.
 6. Enable signals to be sampled with their corresponding checkbox in the signal list of the sidebar.
 
@@ -82,6 +82,7 @@ In general, the interface is currently very minimal and unoptimized (from an UX 
 - [ ] Improve the memory sampler, try to make it more precise and robust in case it starts to lag behind.
 - [ ] Add a memory sampler mode that splits the maximum sampling frequency between multiple signals (or make it do this by default).
 - [ ] Make the memory sampler automatically discover the maximum sampling frequency.
+- [ ] Better ELF symbols parsing, for instance by also recursively looking into structures if DWARF data is present. Also allow for different data types than 32-bit float.
 - [ ] Mean and variance estimation of a signal in a given interval.
 - [ ] Expose more settings to the user.
 - [ ] Better UX and plot controls/interaction.
