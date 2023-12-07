@@ -14,3 +14,7 @@ telnet = "0.2.1"
 thiserror = "1.0.48"
 npyz = "0.8"
 anyhow = "1.0.75"
+
+[profile.release]
+strip = true
+lto = true
