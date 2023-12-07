@@ -149,7 +149,7 @@ impl RTTSampler {
             );
 
             if let Err(err) = result {
-                log::error!("sampler thread returned with error {:?}", err);
+                log::error!("sampler thread returned with error: {:?}", err);
                 log::debug!("sending error notification and switch to terminated state");
 
                 // ignore the send errors instead of unwrapping, at this point if even sending to
@@ -560,7 +560,7 @@ fn synchronize_rtt_channel(
                 break;
             }
             Err(err) => {
-                anyhow::bail!("RTT channel sync: error {:?}", err);
+                anyhow::bail!("RTT channel sync error: {:?}", err);
             }
         }
     }

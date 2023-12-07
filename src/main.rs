@@ -643,7 +643,7 @@ impl eframe::App for OCDScope {
                                     self.current_sampler = Some(sampler);
                                 }
                                 Err(err) => {
-                                    log::error!("failed to start sampler {:?}", err);
+                                    log::error!("failed to start sampler: {:?}", err);
                                     self.show_error(
                                         "Failed to start sampler".to_string(),
                                         format!("{:?}", err),
