@@ -317,11 +317,9 @@ fn sampler_thread(
                 match read_result {
                     Err(err) if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut => {}
                     Err(err) => log::error!("RTT channel read error: {:?}", err),
-                    Ok(n) if n == 0 => {
-                        // TODO: it seems like, if the socket is closed from OpenOCD, this condition triggers
-                        //       (on Windows at least). Verify that we can detect that OpenOCD stopped with this.
-                        log::warn!("RTT channel read 0 bytes");
-                    },
+                    Ok(n) if n == 0 => anyhow::bail!(
+                        "RTT stream socket closed by remote end (OpenOCD terminated externally?)"
+                    ),
                     Ok(n) if n > 0 => {
                         buffer.extend_from_slice(&read_buffer[0..n]);
                     }
@@ -553,7 +551,7 @@ fn synchronize_rtt_channel(
 
         use std::io::ErrorKind;
         match rtt_channel.read(&mut throwaway) {
-            Ok(0) => log::debug!("RTT channel sync: read 0 bytes (?)"),
+            Ok(0) => anyhow::bail!("RTT channel read 0 bytes (OpenOCD terminated externally?)"),
             Ok(n) => log::debug!("RTT channel sync: thrown away {} bytes", n),
             Err(err)
                 if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut =>
