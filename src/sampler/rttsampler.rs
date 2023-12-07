@@ -33,6 +33,7 @@ const SAMPLE_BUFFER_SIZE: usize = 1024;
 // - FIXME: was sampling, the PC was put to sleep and the debugger disconnected (not sure
 //   in which order those two things happened) and when resumed the sampler was spamming 0
 //   samples/s of sampling rate, maxing out CPU usage
+// - the RTT stream loses synchronization, sometimes: try to understand why
 
 #[derive(Debug)]
 enum ThreadCommand {
