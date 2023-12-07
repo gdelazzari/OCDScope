@@ -58,13 +58,6 @@ impl RTTSampler {
         let (command_tx, command_rx) = mpsc::channel();
         let (notifications_tx, notifications_rx) = mpsc::channel();
 
-        // TODO: handle and report errors of various kind, during initial connection
-        // and handshake
-
-        // TODO: make all of the following more robust, we are running open-loop on
-        // the protocol, and not checking what's happening, thus not trying to recover
-        // unexpected conditions, and not reporting potentially useful errors to the user
-
         let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone())
             .context("failed to connect Telnet interface")?;
 
