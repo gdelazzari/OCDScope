@@ -111,6 +111,8 @@ impl OCDScope {
     }
 
     fn show_error(&mut self, title: String, message: String) {
+        self.close_all_dialogs();
+
         self.error_title = title;
         self.error_message = message;
         self.show_error_dialog = true;
