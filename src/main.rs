@@ -680,7 +680,10 @@ fn main() {
         .init()
         .unwrap();
 
-    let viewport = egui::ViewportBuilder::default().with_inner_size([800.0, 600.0]);
+    let viewport = egui::ViewportBuilder::default()
+        .with_inner_size([800.0, 600.0])
+        .with_title("OCDScope")
+        .with_app_id("ocdscope");
 
     let options = eframe::NativeOptions {
         viewport,
@@ -690,7 +693,7 @@ fn main() {
     };
 
     eframe::run_native(
-        "OCDScope",
+        "ocdscope",
         options,
         Box::new(|_| {
             let app = OCDScope::new();
