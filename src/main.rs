@@ -526,7 +526,9 @@ impl eframe::App for OCDScope {
                         }
                     }
 
-                    if plot_ui.plot_clicked() || plot_ui.plot_secondary_clicked() {
+                    let response = plot_ui.response();
+
+                    if response.clicked() || response.secondary_clicked() {
                         self.plot_auto_follow = false;
                     }
 
