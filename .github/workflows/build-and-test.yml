@@ -22,14 +22,7 @@ jobs:
         version: 1
     
     - name: Cache Cargo registry and target directory
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/registry
-          ./target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.toml', 'Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      uses: Swatinem/rust-cache@v2.7.0      
     
     - name: Checkout source code
       uses: actions/checkout@v3
