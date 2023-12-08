@@ -113,6 +113,8 @@ impl OCDScope {
     fn show_error(&mut self, title: String, message: String) {
         self.close_all_dialogs();
 
+        log::error!("displaying error to user: {}: {}", title, message);
+
         self.error_title = title;
         self.error_message = message;
         self.show_error_dialog = true;
@@ -294,37 +296,54 @@ impl eframe::App for OCDScope {
                         "Capacity: {}",
                         utils::human_readable_size(capacity)
                     ));
-                    if ui.button("Export data...").clicked() {
-                        let maybe_filename = rfd::FileDialog::new()
-                            .add_filter("CSV file (*.csv)", &["csv"])
-                            .add_filter("Numpy data (*.npy)", &["npy"])
-                            .set_file_name("export.csv")
-                            .save_file();
-                        if let Some(filename) = maybe_filename {
-                            match filename
-                                .extension()
-                                .map(|s| s.to_str().unwrap().to_ascii_lowercase())
-                            {
-                                Some(ext) if ext == "csv" => {
-                                    log::info!("exporting CSV file to {:?}", filename);
-                                    export::write_csv(&filename, &self.signals, &self.samples)
-                                        .unwrap();
-                                    // TODO: display success or error message to user
+                });
+
+                if ui.button("Export data...").clicked() {
+                    let maybe_filename = rfd::FileDialog::new()
+                        .add_filter("CSV file (*.csv)", &["csv"])
+                        .add_filter("Numpy data (*.npy)", &["npy"])
+                        .set_file_name("export.csv")
+                        .save_file();
+                    if let Some(filename) = maybe_filename {
+                        match filename
+                            .extension()
+                            .map(|s| s.to_str().unwrap().to_ascii_lowercase())
+                        {
+                            Some(ext) if ext == "csv" => {
+                                log::info!("exporting CSV file to {:?}", filename);
+
+                                match export::write_csv(&filename, &self.signals, &self.samples) {
+                                    Ok(_) => log::info!("export successful"),
+                                    Err(err) => {
+                                        self.show_error(
+                                            "CSV export error".into(),
+                                            format!("{:?}", err),
+                                        );
+                                    }
                                 }
-                                Some(ext) if ext == "npy" => {
-                                    log::info!("exporting Numpy file to {:?}", filename);
-                                    export::write_npy(&filename, &self.signals, &self.samples)
-                                        .unwrap();
-                                    // TODO: display success or error message to user
-                                }
-                                Some(_) => {
-                                    // TODO: display error to user
-                                }
-                                None => {} // operation was cancelled
                             }
+                            Some(ext) if ext == "npy" => {
+                                log::info!("exporting NumPy file to {:?}", filename);
+                                match export::write_npy(&filename, &self.signals, &self.samples) {
+                                    Ok(_) => log::info!("export successful"),
+                                    Err(err) => {
+                                        self.show_error(
+                                            "NumPy export error".into(),
+                                            format!("{:?}", err),
+                                        );
+                                    }
+                                }
+                            }
+                            Some(ext) => {
+                                self.show_error(
+                                    "Unsupported export format".into(),
+                                    format!("Cannot export file with extension {ext:?}"),
+                                );
+                            }
+                            None => {} // operation was cancelled
                         }
                     }
-                });
+                }
 
                 ui.separator();
 
@@ -654,7 +673,6 @@ impl eframe::App for OCDScope {
                                     self.current_sampler = Some(sampler);
                                 }
                                 Err(err) => {
-                                    log::error!("failed to start sampler: {:?}", err);
                                     self.show_error(
                                         "Failed to start sampler".to_string(),
                                         format!("{:?}", err),
