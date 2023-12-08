@@ -3,13 +3,15 @@ use std::fmt::Display;
 use std::io::Write;
 use std::path::Path;
 
+use anyhow::Context;
+
 use crate::{buffer::SampleBuffer, SignalConfig};
 
 pub fn write_csv(
     filename: &Path,
     signals: &[SignalConfig],
     samples: &HashMap<u32, SampleBuffer>,
-) -> std::io::Result<()> {
+) -> anyhow::Result<()> {
     if signals.len() == 0 {
         // nothing to do
         return Ok(());
@@ -45,14 +47,18 @@ pub fn write_csv(
 
     let signal_buffers: Vec<&SampleBuffer> = signals
         .iter()
-        .map(|signal| samples.get(&signal.id).unwrap())
+        .filter_map(|signal| samples.get(&signal.id))
         .collect();
+
+    if signal_buffers.len() != signals.len() {
+        anyhow::bail!("some of the signals requested for export have no buffer");
+    }
 
     let n_samples = signal_buffers
         .iter()
         .map(|buffer| buffer.samples().len())
         .min()
-        .unwrap();
+        .context("internal error, should have had at least one signal at this point")?;
 
     for i in 0..n_samples {
         let t = signal_buffers[0].samples()[i].x;
@@ -77,7 +83,7 @@ pub fn write_npy(
     filename: &Path,
     signals: &[SignalConfig],
     samples: &HashMap<u32, SampleBuffer>,
-) -> std::io::Result<()> {
+) -> anyhow::Result<()> {
     use npyz::WriterBuilder;
 
     if signals.len() == 0 {
@@ -94,14 +100,18 @@ pub fn write_npy(
 
     let signal_buffers: Vec<&SampleBuffer> = signals
         .iter()
-        .map(|signal| samples.get(&signal.id).unwrap())
+        .filter_map(|signal| samples.get(&signal.id))
         .collect();
+
+    if signal_buffers.len() != signals.len() {
+        anyhow::bail!("some of the signals requested for export have no buffer");
+    }
 
     let n_samples = signal_buffers
         .iter()
         .map(|buffer| buffer.samples().len())
         .min()
-        .unwrap();
+        .context("internal error, should have had at least one signal at this point")?;
 
     let mut writer = {
         npyz::WriteOptions::new()
