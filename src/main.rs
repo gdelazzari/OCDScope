@@ -197,7 +197,7 @@ impl OCDScope {
                 &self.gdb_address,
                 sample_rate?,
                 self.elf_filename.clone(),
-            )),
+            )?),
             SamplingMethod::RTT => Box::new(RTTSampler::start(
                 &self.telnet_address,
                 rtt_polling_interval?,
