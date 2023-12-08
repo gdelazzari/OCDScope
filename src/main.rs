@@ -437,7 +437,7 @@ impl eframe::App for OCDScope {
 
         egui::CentralPanel::default()
             .show(ctx, |ui| {
-                use egui::plot::{AxisBools, Legend, Line, Plot, PlotBounds};
+                use egui_plot::{Legend, Line, Plot, PlotBounds};
 
                 // TODO: a vector with linear search might be more efficient, investigate
                 let signal_scales = self
@@ -446,10 +446,12 @@ impl eframe::App for OCDScope {
                     .map(|signal| (signal.name.clone(), signal.scale.value()))
                     .collect::<HashMap<_, _>>();
 
-                // TODO: handle vertical scale for each signal
                 let mut plot = Plot::new("main")
                     .legend(Legend::default())
-                    .allow_zoom(AxisBools { x: true, y: false })
+                    .allow_zoom(egui::Vec2b::new(true, false))
+                    .y_axis_width(2)
+                    .auto_bounds_x()
+                    .auto_bounds_y()
                     .label_formatter(move |name, value| {
                         if let Some(scale) = signal_scales.get(name) {
                             format!("{}\nx: {}\ny: {}", name, value.x, value.y / scale)
@@ -678,8 +680,10 @@ fn main() {
         .init()
         .unwrap();
 
+    let viewport = egui::ViewportBuilder::default().with_inner_size([800.0, 600.0]);
+
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(800.0, 600.0)),
+        viewport,
         default_theme: eframe::Theme::Dark,
         follow_system_theme: false,
         ..Default::default()

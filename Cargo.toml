@@ -4,16 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cpp_demangle = "0.4.2"
-eframe = { version = "0.22.0", features = ["wayland"] }
-elf = "0.7.2"
-log = "0.4.20"
-rfd = "0.11.4"
-simple_logger = "4.2.0"
-telnet = "0.2.1"
-thiserror = "1.0.48"
+cpp_demangle = "0.4"
+eframe = { version = "0.24", features = ["wayland"] }
+egui_plot = "0.24"
+elf = "0.7"
+log = "0.4"
+rfd = "0.12"
+simple_logger = "4.3"
+telnet = "0.2"
+thiserror = "1.0"
 npyz = "0.8"
-anyhow = "1.0.75"
+anyhow = "1.0"
 
 [profile.release]
 strip = true

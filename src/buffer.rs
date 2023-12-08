@@ -8,7 +8,7 @@
 //
 // TODOs:
 
-use eframe::egui::plot::{PlotPoint, PlotPoints};
+use egui_plot::{PlotPoint, PlotPoints};
 
 pub struct SampleBuffer {
     samples: Vec<PlotPoint>,
