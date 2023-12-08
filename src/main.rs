@@ -212,8 +212,8 @@ impl OCDScope {
         // this in debug mode and try to fix the incident in release mode
         debug_assert!(self.current_sampler.is_none());
         if let Some(previous_sampler) = self.current_sampler.take() {
+            log::warn!("found an active sampler before connecting a new one, trying to stop it");
             previous_sampler.stop();
-            // TODO: report and log this event as a warning
         }
 
         self.signals = sampler
