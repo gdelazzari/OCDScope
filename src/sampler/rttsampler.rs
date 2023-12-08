@@ -228,8 +228,6 @@ fn sampler_thread(
         }
     };
 
-    // "RTT TCP stream connected"
-
     let mut status = Status::Initializing;
 
     let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone())
@@ -238,8 +236,9 @@ fn sampler_thread(
     // TODO:
     // - handle failure of RTT TCP channel opening, which can happen for various
     //   reasons (like address already in use)
-    // - ensure, somehow, that the TCP port we're asking is free
-    let rtt_channel_tcp_port = 9090;
+
+    let rtt_channel_tcp_port = crate::utils::find_free_tcp_port()?;
+
     openocd
         .rtt_server_start(rtt_channel_tcp_port, rtt_channel_id)
         .context("failed to start RTT server")?;
@@ -248,6 +247,8 @@ fn sampler_thread(
         Ipv4Addr::new(127, 0, 0, 1),
         rtt_channel_tcp_port,
     ));
+
+    log::debug!("opening RTT TCP stream on {:?}", rtt_channel_tcp_address);
 
     let polling_period = Duration::from_millis(polling_interval as u64);
 
