@@ -9,6 +9,7 @@ mod gdbremote;
 mod openocd;
 mod parsablefloat;
 mod sampler;
+mod utils;
 
 use buffer::SampleBuffer;
 use parsablefloat::ParsableFloat;
@@ -288,8 +289,11 @@ impl eframe::App for OCDScope {
                         (u + bu, c + bc)
                     });
 
-                    ui.label(format!("Size: {}", human_readable_size(used)));
-                    ui.label(format!("Capacity: {}", human_readable_size(capacity)));
+                    ui.label(format!("Size: {}", utils::human_readable_size(used)));
+                    ui.label(format!(
+                        "Capacity: {}",
+                        utils::human_readable_size(capacity)
+                    ));
                     if ui.button("Export data...").clicked() {
                         let maybe_filename = rfd::FileDialog::new()
                             .add_filter("CSV file (*.csv)", &["csv"])
@@ -704,18 +708,4 @@ fn main() {
         }),
     )
     .expect("eframe::run_native error");
-}
-
-fn human_readable_size(size: usize) -> String {
-    const T: usize = 2048;
-
-    if size < T {
-        format!("{} B", size)
-    } else if (size / 1024) < T {
-        format!("{} KiB", size / 1024)
-    } else if (size / 1024 / 1024) < T {
-        format!("{} MiB", size / 1024 / 1024)
-    } else {
-        format!("{} GiB", size / 1024 / 1024 / 1024)
-    }
 }
