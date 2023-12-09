@@ -36,7 +36,7 @@ fn parse_gdb_packet(bytes: &[u8]) -> Result<&[u8]> {
     }
 
     if bytes[0] != b'$' {
-        return Err(GDBRemoteError::ParseError("expected initial $".into()));
+        return Err(GDBRemoteError::ParseError("missing initial $".into()));
     }
 
     // TODO: we may need to handle escaping
@@ -60,7 +60,7 @@ fn parse_gdb_packet(bytes: &[u8]) -> Result<&[u8]> {
 
     if contents_checksum != packet_checksum {
         return Err(GDBRemoteError::ParseError(format!(
-            "checksum didn't match, computed {:02x?} but expected {:02x}",
+            "checksum didn't match, computed {:02x} but expected {:02x}",
             contents_checksum, packet_checksum
         )));
     }
