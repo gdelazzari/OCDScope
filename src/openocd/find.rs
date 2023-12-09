@@ -11,13 +11,13 @@ pub fn find_running_openocd() -> anyhow::Result<Vec<OpenOCDInfo>> {
     log::trace!("finding running OpenOCD server with its open ports");
 
     let sockets_info = netstat2::get_sockets_info(AddressFamilyFlags::IPV4, ProtocolFlags::TCP)?;
-    log::debug!("retrieved sockets info, {} items", sockets_info.len());
+    log::trace!("retrieved sockets info, {} items", sockets_info.len());
 
     let result = proclist::iterate_processes_info()
         .filter_map(Result::ok)
         .filter(|proc| proc.name.contains("openocd"))
         .map(|proc| {
-            let tcp_sockets = sockets_info
+            let tcp_sockets: Vec<TcpSocketInfo> = sockets_info
                 .iter()
                 .filter(|tsi| tsi.associated_pids.contains(&proc.pid))
                 .filter_map(|si| match &si.protocol_socket_info {
@@ -25,6 +25,12 @@ pub fn find_running_openocd() -> anyhow::Result<Vec<OpenOCDInfo>> {
                     ProtocolSocketInfo::Udp(_) => None,
                 })
                 .collect();
+
+            log::debug!(
+                "found running OpenOCD server (pid={}) with {} sockets",
+                proc.pid,
+                tcp_sockets.len()
+            );
 
             OpenOCDInfo {
                 process_name: proc.name.clone(),
