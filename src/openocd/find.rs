@@ -1,10 +1,12 @@
-use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpSocketInfo};
+use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo};
 
 #[derive(Debug)]
 pub struct OpenOCDInfo {
     pub process_name: String,
     pub pid: u32,
-    pub tcp_sockets: Vec<TcpSocketInfo>,
+    pub open_tcp_ports: Vec<u16>,
+}
+
 }
 
 pub fn find_running_openocd() -> anyhow::Result<Vec<OpenOCDInfo>> {
@@ -17,25 +19,25 @@ pub fn find_running_openocd() -> anyhow::Result<Vec<OpenOCDInfo>> {
         .filter_map(Result::ok)
         .filter(|proc| proc.name.contains("openocd"))
         .map(|proc| {
-            let tcp_sockets: Vec<TcpSocketInfo> = sockets_info
+            let open_tcp_ports: Vec<u16> = sockets_info
                 .iter()
                 .filter(|tsi| tsi.associated_pids.contains(&proc.pid))
                 .filter_map(|si| match &si.protocol_socket_info {
-                    ProtocolSocketInfo::Tcp(tcp_socket_info) => Some(tcp_socket_info.clone()),
+                    ProtocolSocketInfo::Tcp(tcp_socket_info) => Some(tcp_socket_info.local_port),
                     ProtocolSocketInfo::Udp(_) => None,
                 })
                 .collect();
 
             log::debug!(
-                "found running OpenOCD server (pid={}) with {} sockets",
+                "found running OpenOCD server (pid={}) with {} TCP ports open",
                 proc.pid,
-                tcp_sockets.len()
+                open_tcp_ports.len()
             );
 
             OpenOCDInfo {
                 process_name: proc.name.clone(),
                 pid: proc.pid,
-                tcp_sockets,
+                open_tcp_ports,
             }
         })
         .collect();
