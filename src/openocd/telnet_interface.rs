@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use telnet::{Event, Telnet};
 use thiserror::Error;
 
+const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
 const TELNET_BUFFER_SIZE: usize = 1024;
 
 pub type Result<T> = std::result::Result<T, TelnetInterfaceError>;
@@ -198,7 +199,7 @@ impl TelnetInterface {
 
         Ok(TelnetInterface {
             connection,
-            timeout: Duration::from_millis(200),
+            timeout: DEFAULT_TIMEOUT,
             buffer: Vec::new(),
         })
     }
