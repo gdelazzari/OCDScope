@@ -111,7 +111,13 @@ impl OCDScope {
     }
 
     fn show_error(&mut self, title: String, message: String) {
+        if self.show_error_dialog {
+            log::warn!("asked to show error but another one is active, old error will be overwritten");
+        }
+
         self.close_all_dialogs();
+
+        debug_assert!(self.show_error_dialog == false);
 
         log::error!("displaying error to user: {}: {}", title, message);
 
