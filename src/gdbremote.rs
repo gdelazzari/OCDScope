@@ -1,7 +1,10 @@
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
 
 pub type Result<T> = std::result::Result<T, GDBRemoteError>;
 
@@ -11,6 +14,8 @@ pub enum GDBRemoteError {
     IOError(#[from] std::io::Error),
     #[error("Parse error: {0}")]
     ParseError(String),
+    #[error("Timeout")]
+    Timeout,
     #[error("End of stream")]
     EndOfStream,
 }
@@ -74,6 +79,7 @@ fn parse_gdb_packet(bytes: &[u8]) -> Result<&[u8]> {
 
 pub struct GDBRemote {
     stream: TcpStream,
+    timeout: Duration,
     data_buffer: Vec<u8>,
 }
 
@@ -113,17 +119,39 @@ impl Response {
     }
 }
 
+// Private helpers
 impl GDBRemote {
-    pub fn connect<A: ToSocketAddrs>(address: A) -> Result<GDBRemote> {
-        let stream = TcpStream::connect(address)?;
+    fn feed_buffer_with_byte(&mut self, timeout_at: Instant) -> Result<()> {
+        use std::io::ErrorKind;
 
-        Ok(GDBRemote {
-            stream,
-            data_buffer: Vec::new(),
-        })
+        let now = Instant::now();
+
+        if timeout_at < now {
+            return Err(GDBRemoteError::Timeout);
+        }
+
+        let timeout = timeout_at - now;
+
+        self.stream.set_read_timeout(Some(timeout))?;
+
+        let mut buffer = [0 as u8; 1];
+        match self.stream.read(&mut buffer) {
+            Ok(0) => return Err(GDBRemoteError::EndOfStream),
+            Ok(1) => {
+                self.data_buffer.push(buffer[0]);
+                return Ok(());
+            }
+            Ok(_) => unreachable!("asked for 1 byte, should have gotten 0 or 1"),
+            Err(err)
+                if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut =>
+            {
+                Err(GDBRemoteError::Timeout)
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
-    pub fn eat_ack(&mut self) -> Option<()> {
+    fn eat_ack(&mut self) -> Option<()> {
         if self.data_buffer.len() > 0 && self.data_buffer[0] == b'+' {
             self.data_buffer = self.data_buffer[1..].to_vec();
             Some(())
@@ -132,17 +160,35 @@ impl GDBRemote {
         }
     }
 
-    pub fn eat_packet(&mut self) -> Result<Vec<u8>> {
+    fn eat_packet(&mut self) -> Result<Vec<u8>> {
         let packet = parse_gdb_packet(&self.data_buffer)?.to_vec();
 
         self.data_buffer = self.data_buffer[packet.len() + 4..].to_vec();
 
         Ok(packet)
     }
+}
+
+// Public functions
+impl GDBRemote {
+    pub fn connect<A: ToSocketAddrs>(address: A) -> Result<GDBRemote> {
+        let stream = TcpStream::connect(address)?;
+
+        Ok(GDBRemote {
+            stream,
+            timeout: DEFAULT_TIMEOUT,
+            data_buffer: Vec::new(),
+        })
+    }
+
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
 
     pub fn read_response(&mut self) -> Result<Response> {
-        // TODO: implement a variant with timeout
         // TODO: handle corrupted stream
+
+        let timeout_at = Instant::now() + self.timeout;
 
         loop {
             if let Some(()) = self.eat_ack() {
@@ -153,13 +199,9 @@ impl GDBRemote {
                 return Ok(Response::Packet(data));
             }
 
-            let mut buffer = [0 as u8; 128];
-            let len = self.stream.read(&mut buffer)?;
-            if len == 0 {
-                return Err(GDBRemoteError::EndOfStream);
-            }
-
-            self.data_buffer.extend_from_slice(&buffer[0..len]);
+            // couldn't eat an ACK nor a packet, keep feeding the buffer;
+            // errors and timeout will propagate
+            self.feed_buffer_with_byte(timeout_at)?;
         }
     }
 
