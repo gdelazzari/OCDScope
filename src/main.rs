@@ -135,7 +135,7 @@ impl OCDScope {
     fn handle_messages(&mut self, ctx: &egui::Context) {
         let mut sampler_terminated = false;
 
-        if let Some(sampler) = &self.current_sampler {
+        if let Some(sampler) = self.current_sampler.take() {
             while let Ok(notification) = sampler.notification_channel().try_recv() {
                 match notification {
                     sampler::Notification::NewStatus(status) => {
@@ -149,16 +149,14 @@ impl OCDScope {
                         self.last_sampler_info = message;
                     }
                     sampler::Notification::Error(message) => {
-                        if !self.show_error_dialog {
-                            self.error_title = "Sampler error".into();
-                            self.error_message = message;
-                            self.show_error_dialog = true;
-                        } else {
-                            log::warn!("Sampler error detected, but error dialog already open");
-                        }
+                        self.show_error("Sampler error".into(), message);
                     }
                 }
             }
+
+            // we temporarely took ownership of the sampler by moving it out of `self`,
+            // now we put it back
+            self.current_sampler = Some(sampler);
         }
 
         if sampler_terminated {
