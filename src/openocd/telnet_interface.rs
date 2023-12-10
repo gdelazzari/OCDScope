@@ -345,6 +345,38 @@ impl TelnetInterface {
         Ok(actual_speed)
     }
 
+    pub fn get_adapter_speed(&mut self) -> Result<usize> {
+        let timeout_at = Instant::now() + self.timeout;
+
+        self.wait_prompt(timeout_at)?;
+
+        self.write_command("adapter speed", timeout_at)?;
+
+        let actual_speed = loop {
+            let line = match self
+                .expect_line_with(timeout_at, |line| line.starts_with(b"adapter speed: "))
+            {
+                Ok(line) => line,
+                Err(TelnetInterfaceError::UnexpectedResponse(_)) => continue,
+                Err(err) => return Err(err),
+            };
+
+            let actual_speed = String::from_utf8(line.clone())
+                .ok()
+                .and_then(|l| l.strip_suffix("\r\n").map(str::to_string))
+                .and_then(|l| l.split(": ").last().map(str::to_string))
+                .and_then(|s| s.split(" ").next().map(str::to_string))
+                .and_then(|a| usize::from_str_radix(&a, 10).ok())
+                .ok_or_else(|| TelnetInterfaceError::UnexpectedResponse(line))?;
+
+            break actual_speed;
+        };
+
+        self.wait_line_with(timeout_at, |line| line == b"\r\n")?;
+
+        Ok(actual_speed)
+    }
+
     pub fn set_rtt_polling_interval(&mut self, milliseconds: u32) -> Result<()> {
         let timeout_at = Instant::now() + self.timeout;
 
