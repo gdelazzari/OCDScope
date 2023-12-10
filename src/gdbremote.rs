@@ -51,6 +51,10 @@ fn parse_gdb_packet(bytes: &[u8]) -> Result<&[u8]> {
         .position(|&b| b == b'#')
         .ok_or(GDBRemoteError::ParseError("no final # found".into()))?;
 
+    if bytes.len() < pound_i + 3 {
+        return Err(GDBRemoteError::ParseError("packet too short (can't hold checksum)".into()));
+    }
+
     let contents = &bytes[1..pound_i];
 
     let contents_checksum: u8 = contents.iter().fold(0x00, |c, &b| c.wrapping_add(b));
