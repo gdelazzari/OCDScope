@@ -173,6 +173,8 @@ fn sampler_thread(
 
     let mut gdb = GDBRemote::connect(address)?;
 
+    gdb.set_timeout(Duration::from_millis(2000));
+
     if !gdb.read_response()?.is_ack() {
         anyhow::bail!("expected initial ACK");
     }
