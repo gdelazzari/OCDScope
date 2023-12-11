@@ -360,7 +360,8 @@ impl eframe::App for OCDScope {
                     ui.add(
                         egui::DragValue::new(&mut self.plot_auto_follow_time)
                             .clamp_range(1.0..=3600.0)
-                            .suffix(" s"),
+                            .suffix(" s")
+                            .speed(0.1),
                     );
                 });
 
@@ -372,7 +373,8 @@ impl eframe::App for OCDScope {
                     ui.add(
                         egui::DragValue::new(&mut self.buffer_auto_truncate_at)
                             .clamp_range(1.0..=3600.0)
-                            .suffix(" s"),
+                            .suffix(" s")
+                            .speed(0.1),
                     );
                 });
 
