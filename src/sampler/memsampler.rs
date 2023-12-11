@@ -267,9 +267,6 @@ fn sampler_thread(
                 // + handle the possibility of the target breaking into some exception handler, calling
                 //   for the debugger, or other events that might happend after issuing a GDB "continue"
                 //   command to the OpenOCD
-                if active_memory_addresses.len() == 0 {
-                    continue;
-                }
 
                 let sampled_at = Instant::now();
                 let mut samples = Vec::new();
@@ -321,9 +318,11 @@ fn sampler_thread(
                     }
                 }
 
-                // TODO: conversion from u128 to u64 could fail
-                let timestamp = (sampled_at - start).as_micros() as u64;
-                sampled_tx.send((timestamp, samples))?;
+                if samples.len() > 0 {
+                    // TODO: conversion from u128 to u64 could fail
+                    let timestamp = (sampled_at - start).as_micros() as u64;
+                    sampled_tx.send((timestamp, samples))?;
+                }
             }
             Status::Paused => match command_rx.recv() {
                 // TODO: should we handle the empty 'O' packets sent by OpenOCD also here?
