@@ -1,5 +1,7 @@
 use std::{sync::mpsc, thread, time::Duration};
 
+use anyhow::Context;
+
 use crate::sampler::{Notification, Sample, Sampler, Status};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
@@ -143,7 +145,8 @@ fn sampler_thread(
                         maybe_new_status = Some(Status::Paused);
                     }
                     Ok(ThreadCommand::SetActiveSignals(ids)) => {
-                        // TODO: validate before setting?
+                        // we don't validate the ids before setting them, since the sampling code will
+                        // later simply error out if wrong ids were provided
                         active_ids = ids;
                     }
                     Ok(other) => {
@@ -170,8 +173,9 @@ fn sampler_thread(
                         if active_ids.len() > 0 {
                             let samples = active_ids
                                 .iter()
-                                .map(|&id| (id, ys[id as usize]))
-                                .collect::<Vec<_>>();
+                                .map(|&id| ys.get(id as usize).map(|y| (id, *y)))
+                                .collect::<Option<Vec<_>>>()
+                                .context("failed to pick signal samples, the requested active signals are not valid")?;
 
                             sampled_tx.send(((t * 1e6) as u64, samples))?;
                         }
@@ -190,7 +194,8 @@ fn sampler_thread(
                     last_sampled_at = Instant::now();
                 }
                 Ok(ThreadCommand::SetActiveSignals(ids)) => {
-                    // TODO: validate before setting?
+                    // we don't validate the ids before setting them, since the sampling code will
+                    // later simply error out if wrong ids were provided
                     active_ids = ids;
                 }
                 Ok(other) => {
