@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
+mod assets;
 mod buffer;
 mod export;
 mod gdbremote;
@@ -248,31 +249,61 @@ impl eframe::App for OCDScope {
             ui.group(|toolbar_group| {
                 toolbar_group.horizontal(|toolbar| {
                     if self.current_sampler.is_none() {
-                        if toolbar.button("Connect...").clicked() {
+                        if toolbar
+                            .add(egui::Button::image_and_text(
+                                assets::icons::LINK,
+                                "Connect...",
+                            ))
+                            .clicked()
+                        {
                             self.show_connect_dialog = true;
                         }
                     } else {
-                        if toolbar.button("Disconnect").clicked() {
+                        if toolbar
+                            .add(egui::Button::image_and_text(
+                                assets::icons::UNLINK,
+                                "Disconnect",
+                            ))
+                            .clicked()
+                        {
                             let sampler = self.current_sampler.take().unwrap();
                             sampler.stop();
 
                             debug_assert!(self.current_sampler.is_none());
                         }
 
-                        // TODO: enable/disable buttons based on current state, or only show one
-                        // TODO: fancy icons
-                        if toolbar.button("Pause").clicked() {
-                            self.current_sampler.as_ref().unwrap().pause();
-                        }
-                        if toolbar.button("Resume").clicked() {
-                            self.current_sampler.as_ref().unwrap().resume();
-                        }
-
-                        // TODO: fancy icons
                         if let Some(status) = self.current_sampler_status {
+                            match status {
+                                sampler::Status::Sampling => {
+                                    if toolbar
+                                        .add(egui::Button::image_and_text(
+                                            assets::icons::PAUSE,
+                                            "Pause",
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.current_sampler.as_ref().unwrap().pause();
+                                    }
+                                }
+                                sampler::Status::Paused => {
+                                    if toolbar
+                                        .add(egui::Button::image_and_text(
+                                            assets::icons::PLAY,
+                                            "Resume",
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.current_sampler.as_ref().unwrap().resume();
+                                    }
+                                }
+                                _ => {}
+                            }
+
+                            // TODO: fancy icons?
                             toolbar.label(format!("{:?}", status));
                         }
 
+                        toolbar.add_sized(egui::Vec2{x: 24.0, y: 24.0}, egui::Image::new(assets::icons::INFO));
                         toolbar.label(&self.last_sampler_info);
                     }
                 });
@@ -706,8 +737,11 @@ fn main() {
     eframe::run_native(
         "ocdscope",
         options,
-        Box::new(|_| {
+        Box::new(|ctx| {
+            egui_extras::install_image_loaders(&ctx.egui_ctx);
+
             let app = OCDScope::new();
+
             Box::new(app)
         }),
     )

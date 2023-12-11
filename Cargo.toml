@@ -7,6 +7,7 @@ edition = "2021"
 cpp_demangle = "0.4"
 eframe = "0.24"
 egui_plot = "0.24"
+egui_extras = { version = "0.24", features = ["svg"] }
 elf = "0.7"
 log = "0.4"
 rfd = "0.12"
