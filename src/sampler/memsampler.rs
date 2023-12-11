@@ -135,6 +135,7 @@ impl Sampler for MemSampler {
         &self.notifications_rx
     }
 
+    
     fn pause(&self) {
         if let Err(err) = self.command_tx.send(ThreadCommand::Pause) {
             log::error!("failed to send pause command: {:?}", err);

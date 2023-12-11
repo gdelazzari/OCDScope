@@ -64,9 +64,12 @@ impl Sampler for FakeSampler {
     }
 
     fn set_active_signals(&self, ids: &[u32]) {
-        self.command_tx
+        if let Err(err) = self
+            .command_tx
             .send(ThreadCommand::SetActiveSignals(ids.to_vec()))
-            .unwrap();
+        {
+            log::error!("failed to send SetActiveSignals command: {:?}", err);
+        }
     }
 
     fn sampled_channel(&self) -> &mpsc::Receiver<Sample> {
@@ -78,13 +81,15 @@ impl Sampler for FakeSampler {
     }
 
     fn pause(&self) {
-        // TODO: do not unwrap here
-        self.command_tx.send(ThreadCommand::Pause).unwrap();
+        if let Err(err) = self.command_tx.send(ThreadCommand::Pause) {
+            log::error!("failed to send pause command: {:?}", err);
+        }
     }
 
     fn resume(&self) {
-        // TODO: do not unwrap here
-        self.command_tx.send(ThreadCommand::Resume).unwrap();
+        if let Err(err) = self.command_tx.send(ThreadCommand::Resume) {
+            log::error!("failed to send resume command: {:?}", err);
+        }
     }
 
     fn stop(self: Box<Self>) {
