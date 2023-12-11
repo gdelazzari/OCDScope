@@ -135,7 +135,6 @@ impl Sampler for MemSampler {
         &self.notifications_rx
     }
 
-    
     fn pause(&self) {
         if let Err(err) = self.command_tx.send(ThreadCommand::Pause) {
             log::error!("failed to send pause command: {:?}", err);
@@ -299,20 +298,12 @@ fn sampler_thread(
                                 break;
                             }
                             _ => {
-                                #[cfg(debug_assertions)]
-                                anyhow::bail!(
-                                    "Unexpected/unparsable response to read request: {:?}",
+                                // TODO: empty the GDB responses queue, to start fresh, and
+                                // try sampling again at next outer iteration
+                                log::warn!(
+                                    "unexpected/unparsable response to read request: {:?}",
                                     response
                                 );
-                                #[cfg(not(debug_assertions))]
-                                {
-                                    // TODO: empty the GDB responses queue, to start fresh, and
-                                    // try sampling again at next outer iteration
-                                    log::error!(
-                                        "unexpected/unparsable response to read request: {:?}",
-                                        response
-                                    );
-                                }
                             }
                         }
                     }
@@ -326,7 +317,6 @@ fn sampler_thread(
             }
             Status::Paused => match command_rx.recv() {
                 // TODO: should we handle the empty 'O' packets sent by OpenOCD also here?
-
                 Ok(ThreadCommand::Stop) => {
                     maybe_new_status = Some(Status::Terminated);
                 }
