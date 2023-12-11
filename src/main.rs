@@ -63,11 +63,11 @@ struct OCDScope {
     gdb_address: String,
     elf_filename: Option<PathBuf>,
     telnet_address: String,
-    sample_rate_string: String,
-    rtt_polling_interval_string: String,
+    sample_rate: f64,
+    rtt_polling_interval: u32,
     rtt_relative_time: bool,
 
-    memory_address_to_add_string: String,
+    memory_address_to_add: u32,
 }
 
 impl OCDScope {
@@ -91,11 +91,11 @@ impl OCDScope {
             gdb_address: "127.0.0.1:3333".into(),
             elf_filename: None,
             telnet_address: "127.0.0.1:4444".into(),
-            sample_rate_string: "1000.0".into(),
-            rtt_polling_interval_string: "1".into(),
+            sample_rate: 1000.0,
+            rtt_polling_interval: 1,
             rtt_relative_time: false,
             signals: Vec::new(),
-            memory_address_to_add_string: "BEEF1010".into(),
+            memory_address_to_add: 0xBEEF1010,
         }
     }
 
@@ -196,20 +196,17 @@ impl OCDScope {
     }
 
     fn try_connect_sampler(&mut self) -> anyhow::Result<Box<dyn Sampler>> {
-        let sample_rate = self.sample_rate_string.parse::<f64>();
-        let rtt_polling_interval = self.rtt_polling_interval_string.parse::<u32>();
-
         let sampler: Box<dyn Sampler> = match self.sampling_method {
-            SamplingMethod::Simulated => Box::new(FakeSampler::start(sample_rate?)),
+            SamplingMethod::Simulated => Box::new(FakeSampler::start(self.sample_rate)),
             SamplingMethod::MemorySamping => Box::new(MemSampler::start(
                 &self.gdb_address,
                 &self.telnet_address,
-                sample_rate?,
+                self.sample_rate,
                 self.elf_filename.clone(),
             )?),
             SamplingMethod::RTT => Box::new(RTTSampler::start(
                 &self.telnet_address,
-                rtt_polling_interval?,
+                self.rtt_polling_interval,
             )?),
         };
 
@@ -392,7 +389,12 @@ impl eframe::App for OCDScope {
                                 some_enable_changed |=
                                     item.checkbox(&mut signal.enabled, "").changed();
 
-                                item.add(egui::DragValue::new(&mut signal.scale).max_decimals(12).min_decimals(1).speed(0.1));
+                                item.add(
+                                    egui::DragValue::new(&mut signal.scale)
+                                        .max_decimals(12)
+                                        .min_decimals(1)
+                                        .speed(0.1),
+                                );
 
                                 egui::TextEdit::singleline(&mut signal.name)
                                     .id(egui::Id::new(format!("signal-name-{}", signal.id)))
@@ -541,7 +543,11 @@ impl eframe::App for OCDScope {
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Hex address: ");
-                        ui.text_edit_singleline(&mut self.memory_address_to_add_string);
+                        ui.add(
+                            egui::DragValue::new(&mut self.memory_address_to_add)
+                                .hexadecimal(8, false, true)
+                                .clamp_range(0..=u32::MAX),
+                        )
                     });
 
                     ui.separator();
@@ -551,14 +557,12 @@ impl eframe::App for OCDScope {
                             self.show_add_address_dialog = false;
                         }
                         if ui.button("Add").clicked() {
-                            if let Ok(address) =
-                                u32::from_str_radix(&self.memory_address_to_add_string, 16)
-                            {
-                                self.signals
-                                    .push(SignalConfig::new(address, format!("0x{:08x}", address)));
+                            self.signals.push(SignalConfig::new(
+                                self.memory_address_to_add,
+                                format!("0x{:08x}", self.memory_address_to_add),
+                            ));
 
-                                self.show_add_address_dialog = false;
-                            }
+                            self.show_add_address_dialog = false;
                         }
                     });
                 });
@@ -618,13 +622,21 @@ impl eframe::App for OCDScope {
                     ) {
                         ui.horizontal(|ui| {
                             ui.label("Sampling rate [Hz]: ");
-                            ui.text_edit_singleline(&mut self.sample_rate_string);
+                            ui.add(
+                                egui::DragValue::new(&mut self.sample_rate)
+                                    .clamp_range(0.01..=1_000_000.0)
+                                    .max_decimals(12)
+                                    .min_decimals(1),
+                            );
                         });
                     }
                     if matches!(self.sampling_method, SamplingMethod::RTT) {
                         ui.horizontal(|ui| {
                             ui.label("Polling interval [ms]: ");
-                            ui.text_edit_singleline(&mut self.rtt_polling_interval_string);
+                            ui.add(
+                                egui::DragValue::new(&mut self.rtt_polling_interval)
+                                    .clamp_range(1..=100),
+                            );
                         });
                         ui.checkbox(&mut self.rtt_relative_time, "Relative timestamp");
                     }
