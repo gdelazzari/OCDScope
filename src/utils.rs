@@ -26,6 +26,7 @@ pub fn find_free_tcp_port() -> std::io::Result<u16> {
     Ok(port)
 }
 
+#[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
 

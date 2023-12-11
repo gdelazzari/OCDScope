@@ -161,6 +161,7 @@ fn index_before_at(samples: &[PlotPoint], t: f64) -> Option<usize> {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
