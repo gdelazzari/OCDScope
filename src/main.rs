@@ -203,6 +203,7 @@ impl OCDScope {
             SamplingMethod::Simulated => Box::new(FakeSampler::start(sample_rate?)),
             SamplingMethod::MemorySamping => Box::new(MemSampler::start(
                 &self.gdb_address,
+                &self.telnet_address,
                 sample_rate?,
                 self.elf_filename.clone(),
             )?),
@@ -620,6 +621,15 @@ impl eframe::App for OCDScope {
 
                     ui.separator();
 
+                    if matches!(
+                        self.sampling_method,
+                        SamplingMethod::MemorySamping | SamplingMethod::RTT
+                    ) {
+                        ui.horizontal(|ui| {
+                            ui.label("OpenOCD Telnet endpoint: ");
+                            ui.text_edit_singleline(&mut self.telnet_address);
+                        });
+                    }
                     if matches!(self.sampling_method, SamplingMethod::MemorySamping) {
                         ui.horizontal(|ui| {
                             ui.label("OpenOCD GDB endpoint: ");
@@ -650,10 +660,6 @@ impl eframe::App for OCDScope {
                         });
                     }
                     if matches!(self.sampling_method, SamplingMethod::RTT) {
-                        ui.horizontal(|ui| {
-                            ui.label("OpenOCD Telnet endpoint: ");
-                            ui.text_edit_singleline(&mut self.telnet_address);
-                        });
                         ui.horizontal(|ui| {
                             ui.label("Polling interval [ms]: ");
                             ui.text_edit_singleline(&mut self.rtt_polling_interval_string);

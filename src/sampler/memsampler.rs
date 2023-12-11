@@ -8,8 +8,11 @@ use std::{
 
 use anyhow::Context;
 
-use crate::gdbremote::{self, GDBRemote};
 use crate::sampler::{Notification, Sample, Sampler, Status};
+use crate::{
+    gdbremote::{self, GDBRemote},
+    openocd::TelnetInterface,
+};
 
 const SAMPLE_BUFFER_SIZE: usize = 1024;
 
@@ -33,8 +36,9 @@ pub struct MemSampler {
 }
 
 impl MemSampler {
-    pub fn start<A: ToSocketAddrs>(
-        address: A,
+    pub fn start<AG: ToSocketAddrs, AT: ToSocketAddrs>(
+        gdb_address: AG,
+        telnet_address: AT,
         rate: f64,
         maybe_elf_filename: Option<PathBuf>,
     ) -> anyhow::Result<MemSampler> {
@@ -42,14 +46,20 @@ impl MemSampler {
         let (command_tx, command_rx) = mpsc::channel();
         let (notifications_tx, notifications_rx) = mpsc::channel();
 
-        let address = address
+        let gdb_address = gdb_address
+            .to_socket_addrs()?
+            .next()
+            .context("no addresses provided")?;
+
+        let telnet_address = telnet_address
             .to_socket_addrs()?
             .next()
             .context("no addresses provided")?;
 
         let join_handle = thread::spawn(move || {
             let result = sampler_thread(
-                address,
+                gdb_address,
+                telnet_address,
                 rate,
                 sampled_tx,
                 command_rx,
@@ -163,13 +173,20 @@ impl Sampler for MemSampler {
 }
 
 fn sampler_thread(
-    address: SocketAddr,
+    gdb_address: SocketAddr,
+    telnet_address: SocketAddr,
     rate: f64,
     sampled_tx: mpsc::SyncSender<Sample>,
     command_rx: mpsc::Receiver<ThreadCommand>,
     notifications_tx: mpsc::Sender<Notification>,
 ) -> anyhow::Result<()> {
-    let mut gdb = GDBRemote::connect(address)?;
+    // try to maximize the adapter clock speed; don't quit if this fails
+    match maximize_adapter_speed(telnet_address) {
+        Err(err) => log::warn!("failed to maximize adapter speed: {:?}", err),
+        Ok(freq) => log::info!("set adapter speed to {} kHz", freq),
+    }
+
+    let mut gdb = GDBRemote::connect(gdb_address)?;
 
     gdb.set_timeout(Duration::from_millis(2000));
 
@@ -393,4 +410,12 @@ fn parse_elf_symbols(path: PathBuf) -> Option<Vec<ParsedELFSymbol>> {
             })
             .collect::<Vec<_>>(),
     )
+}
+
+fn maximize_adapter_speed(telnet_address: SocketAddr) -> anyhow::Result<usize> {
+    let mut openocd = TelnetInterface::connect(telnet_address)?;
+
+    let actual_speed = openocd.set_adapter_speed(1_000_000)?;
+
+    Ok(actual_speed)
 }
