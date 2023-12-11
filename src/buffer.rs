@@ -160,3 +160,109 @@ fn index_before_at(samples: &[PlotPoint], t: f64) -> Option<usize> {
         None
     }
 }
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_index_before_at() {
+        let samples = PlotPoints::from_iter((0..10).map(|i| [i as f64, i as f64]));
+
+        assert_eq!(index_before_at(samples.points(), -1.0), None);
+        assert_eq!(index_before_at(samples.points(), 0.5), Some(0));
+        assert_eq!(index_before_at(samples.points(), 5.0), Some(5));
+        assert_eq!(index_before_at(samples.points(), 10.0), Some(9));
+        assert_eq!(index_before_at(samples.points(), -f64::INFINITY), None);
+        assert_eq!(index_before_at(samples.points(), f64::INFINITY), Some(9));
+    }
+
+    #[test]
+    fn test_samplebuffer_push() {
+        let mut buffer = SampleBuffer::new();
+
+        for i in 0..10 {
+            buffer.push(i as f64, i as f64 + 1.0);
+        }
+
+        assert_eq!(buffer.samples().len(), 10);
+
+        for (i, sample) in (0..10).zip(buffer.samples().iter()) {
+            assert_eq!(sample.x, i as f64);
+            assert_eq!(sample.y, i as f64 + 1.0);
+        }
+    }
+
+    #[test]
+    fn test_samplebuffer_plot_points_range() {
+        let mut buffer = SampleBuffer::new();
+
+        for i in 0..100 {
+            buffer.push(i as f64, i as f64 + 1.0);
+        }
+
+        assert_eq!(buffer.samples().len(), 100);
+
+        assert!(buffer
+            .plot_points(3.0, 50.0, 1.0)
+            .points()
+            .iter()
+            .all(|p| p.x >= 3.0 && p.x <= 50.0));
+
+        assert!(buffer
+            .plot_points(-f64::INFINITY, f64::INFINITY, 1.0)
+            .points()
+            .iter()
+            .all(|p| p.x >= 0.0 && p.x <= 99.0));
+    }
+
+    #[test]
+    fn test_samplebuffer_plot_points_scale() {
+        let mut buffer = SampleBuffer::new();
+
+        for i in 0..10 {
+            buffer.push(i as f64, i as f64 + 1.0);
+        }
+
+        assert_eq!(buffer.samples().len(), 10);
+
+        let scaled = buffer.plot_points(-f64::INFINITY, f64::INFINITY, 1e3);
+
+        for (bp, sp) in buffer.samples().iter().zip(scaled.points().iter()) {
+            assert_eq!(sp.y, bp.y * 1e3);
+        }
+    }
+
+    #[test]
+    fn test_samplebuffer_time_bounds() {
+        let mut buffer = SampleBuffer::new();
+
+        assert_eq!(buffer.time_bounds(), None);
+
+        buffer.push(0.0, 1.0);
+
+        assert_eq!(buffer.time_bounds(), Some((0.0, 0.0)));
+
+        for i in 1..100 {
+            buffer.push(i as f64, i as f64 + 1.0);
+        }
+
+        assert_eq!(buffer.samples().len(), 100);
+        assert_eq!(buffer.time_bounds(), Some((0.0, 99.0)));
+    }
+
+    #[test]
+    fn test_samplebuffer_truncate() {
+        let mut buffer = SampleBuffer::new();
+
+        for i in 0..100 {
+            buffer.push(i as f64, i as f64 + 1.0);
+        }
+
+        assert_eq!(buffer.samples().len(), 100);
+
+        buffer.truncate(10.0);
+
+        assert_eq!(buffer.samples().len(), 10);
+        assert_eq!(buffer.time_bounds(), Some((90.0, 99.0)));
+    }
+}
