@@ -7,12 +7,10 @@ mod buffer;
 mod export;
 mod gdbremote;
 mod openocd;
-mod parsablefloat;
 mod sampler;
 mod utils;
 
 use buffer::SampleBuffer;
-use parsablefloat::ParsableFloat;
 use sampler::{FakeSampler, MemSampler, RTTSampler, Sampler};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -26,7 +24,7 @@ pub struct SignalConfig {
     id: u32,
     name: String,
     enabled: bool,
-    scale: ParsableFloat,
+    scale: f64,
 }
 
 impl SignalConfig {
@@ -49,10 +47,10 @@ struct OCDScope {
     error_message: String,
 
     plot_auto_follow: bool,
-    plot_auto_follow_time: ParsableFloat,
+    plot_auto_follow_time: f64,
 
     buffer_auto_truncate: bool,
-    buffer_auto_truncate_at: ParsableFloat,
+    buffer_auto_truncate_at: f64,
 
     sampling_method: SamplingMethod,
     current_sampler: Option<Box<dyn Sampler>>,
@@ -81,9 +79,9 @@ impl OCDScope {
             error_title: "".into(),
             error_message: "".into(),
             plot_auto_follow: false,
-            plot_auto_follow_time: 1.0.into(),
+            plot_auto_follow_time: 1.0,
             buffer_auto_truncate: true,
-            buffer_auto_truncate_at: 10.0.into(),
+            buffer_auto_truncate_at: 10.0,
             current_sampler: None,
             current_sampler_status: None,
             last_sampler_info: "".into(),
@@ -112,7 +110,9 @@ impl OCDScope {
 
     fn show_error(&mut self, title: String, message: String) {
         if self.show_error_dialog {
-            log::warn!("asked to show error but another one is active, old error will be overwritten");
+            log::warn!(
+                "asked to show error but another one is active, old error will be overwritten"
+            );
         }
 
         self.close_all_dialogs();
@@ -186,7 +186,7 @@ impl OCDScope {
 
             if self.buffer_auto_truncate {
                 for (_, buffer) in self.samples.iter_mut() {
-                    buffer.truncate(self.buffer_auto_truncate_at.value());
+                    buffer.truncate(self.buffer_auto_truncate_at);
                 }
             }
 
@@ -360,23 +360,11 @@ impl eframe::App for OCDScope {
                     ui.set_enabled(self.plot_auto_follow);
 
                     ui.label("Show last ");
-
-                    let plot_auto_follow_edit_color = if self.plot_auto_follow_time.is_parsed_ok() {
-                        egui::Color32::GREEN
-                    } else {
-                        egui::Color32::LIGHT_RED
-                    };
-                    if egui::TextEdit::singleline(self.plot_auto_follow_time.editable_string())
-                        .desired_width(50.0)
-                        .text_color(plot_auto_follow_edit_color)
-                        .show(ui)
-                        .response
-                        .lost_focus()
-                    {
-                        self.plot_auto_follow_time.update();
-                    }
-
-                    ui.label("s");
+                    ui.add(
+                        egui::DragValue::new(&mut self.plot_auto_follow_time)
+                            .clamp_range(1.0..=3600.0)
+                            .suffix(" s"),
+                    );
                 });
 
                 ui.checkbox(&mut self.buffer_auto_truncate, "Buffer auto truncate");
@@ -384,24 +372,11 @@ impl eframe::App for OCDScope {
                     ui.set_enabled(self.buffer_auto_truncate);
 
                     ui.label("Keep last ");
-
-                    let buffer_auto_truncate_edit_color =
-                        if self.buffer_auto_truncate_at.is_parsed_ok() {
-                            egui::Color32::GREEN
-                        } else {
-                            egui::Color32::LIGHT_RED
-                        };
-                    if egui::TextEdit::singleline(self.buffer_auto_truncate_at.editable_string())
-                        .desired_width(50.0)
-                        .text_color(buffer_auto_truncate_edit_color)
-                        .show(ui)
-                        .response
-                        .lost_focus()
-                    {
-                        self.buffer_auto_truncate_at.update();
-                    }
-
-                    ui.label("s");
+                    ui.add(
+                        egui::DragValue::new(&mut self.buffer_auto_truncate_at)
+                            .clamp_range(1.0..=3600.0)
+                            .suffix(" s"),
+                    );
                 });
 
                 ui.separator();
@@ -414,24 +389,11 @@ impl eframe::App for OCDScope {
                     .show(ui, |ui| {
                         for signal in self.signals.iter_mut() {
                             ui.horizontal(|item| {
-                                // TODO: color scale TextEdit in red if the value is invalid?
                                 some_enable_changed |=
                                     item.checkbox(&mut signal.enabled, "").changed();
-                                let edit_color = if signal.scale.is_parsed_ok() {
-                                    egui::Color32::GREEN
-                                } else {
-                                    egui::Color32::LIGHT_RED
-                                };
-                                if egui::TextEdit::singleline(signal.scale.editable_string())
-                                    .id(egui::Id::new(format!("signal-scale-{}", signal.id)))
-                                    .desired_width(50.0)
-                                    .text_color(edit_color)
-                                    .show(item)
-                                    .response
-                                    .changed()
-                                {
-                                    signal.scale.update();
-                                }
+
+                                item.add(egui::DragValue::new(&mut signal.scale).min_decimals(3));
+
                                 egui::TextEdit::singleline(&mut signal.name)
                                     .id(egui::Id::new(format!("signal-name-{}", signal.id)))
                                     .show(item);
@@ -472,7 +434,7 @@ impl eframe::App for OCDScope {
                 let signal_scales = self
                     .signals
                     .iter()
-                    .map(|signal| (signal.name.clone(), signal.scale.value()))
+                    .map(|signal| (signal.name.clone(), signal.scale))
                     .collect::<HashMap<_, _>>();
 
                 let mut plot = Plot::new("main")
@@ -543,7 +505,7 @@ impl eframe::App for OCDScope {
                                     buffer.plot_points(
                                         x_min - margin / 2.0,
                                         x_max + margin / 2.0,
-                                        signal.scale.value(),
+                                        signal.scale,
                                     ),
                                     // buffer.plot_points_generator(x_min - margin / 2.0, x_max + margin / 2.0, 1000),
                                 )
@@ -562,7 +524,7 @@ impl eframe::App for OCDScope {
 
                     if self.plot_auto_follow {
                         let x_max = self.max_time as f64 * 1e-6;
-                        let x_min = x_max - self.plot_auto_follow_time.value();
+                        let x_min = x_max - self.plot_auto_follow_time;
                         plot_ui.set_plot_bounds(PlotBounds::from_min_max(
                             [x_min, -10.0],
                             [x_max, 10.0],
