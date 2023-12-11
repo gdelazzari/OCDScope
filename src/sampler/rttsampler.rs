@@ -26,10 +26,6 @@ const SAMPLE_BUFFER_SIZE: usize = 1024;
 //   the available signals and late reporting of errors
 // - it happened, sometimes, that the target didn't resume after sampling started; find a way to
 //   reproduce and investigate
-// - observed "Error: couldn't bind rtt to socket on port 9090: Address already in use" from OpenOCD
-//   console, may be related to the above
-// - maybe related to above two: if `rtt_server_start` fails, try to stop the server at that port and
-//   to start it again, since it could be that there is already one running on such port
 // - FIXME: was sampling, the PC was put to sleep and the debugger disconnected (not sure
 //   in which order those two things happened) and when resumed the sampler was spamming 0
 //   samples/s of sampling rate, maxing out CPU usage
@@ -80,7 +76,7 @@ impl RTTSampler {
         let actual_speed = openocd
             .set_adapter_speed(1_000_000)
             .context("failed to set adapter speed")?;
-        log::info!("actual adapter speed {}", actual_speed); // TODO: print unit
+        log::info!("actual adapter speed {} kHz", actual_speed);
 
         // set RTT polling interval
         openocd
@@ -232,10 +228,6 @@ fn sampler_thread(
 
     let mut openocd = openocd::TelnetInterface::connect(telnet_address.clone())
         .context("failed to connect Telnet interface in sampler thread")?;
-
-    // TODO:
-    // - handle failure of RTT TCP channel opening, which can happen for various
-    //   reasons (like address already in use)
 
     let rtt_channel_tcp_port = crate::utils::find_free_tcp_port()?;
 

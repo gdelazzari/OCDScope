@@ -169,8 +169,6 @@ fn sampler_thread(
     command_rx: mpsc::Receiver<ThreadCommand>,
     notifications_tx: mpsc::Sender<Notification>,
 ) -> anyhow::Result<()> {
-    // TODO: use timeouts for the GDB communication
-
     let mut gdb = GDBRemote::connect(address)?;
 
     gdb.set_timeout(Duration::from_millis(2000));
