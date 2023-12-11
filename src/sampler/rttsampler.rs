@@ -13,7 +13,7 @@ use crate::{
     sampler::{Notification, Sample, Sampler, Status},
 };
 
-const SAMPLE_BUFFER_SIZE: usize = 1024;
+const SAMPLE_BUFFER_SIZE: usize = 10000;
 
 // TODO:
 // - let user specify RTT control block name (?)
