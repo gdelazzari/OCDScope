@@ -392,7 +392,7 @@ impl eframe::App for OCDScope {
                                 some_enable_changed |=
                                     item.checkbox(&mut signal.enabled, "").changed();
 
-                                item.add(egui::DragValue::new(&mut signal.scale).min_decimals(3));
+                                item.add(egui::DragValue::new(&mut signal.scale).max_decimals(12).min_decimals(1).speed(0.1));
 
                                 egui::TextEdit::singleline(&mut signal.name)
                                     .id(egui::Id::new(format!("signal-name-{}", signal.id)))
