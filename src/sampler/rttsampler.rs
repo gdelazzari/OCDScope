@@ -797,7 +797,7 @@ mod tests {
         assert!(autosyncer.try_find_alignment().0.is_infinite());
         assert!(autosyncer.try_find_alignment().1.is_none());
 
-        // start appending packets with an increasing timestamp and a constant float
+        // start appending packets with an increasing timestamp and a sine wave float
         for i in 0..1000 {
             let t = i as u32 * 100;
             let y = (i as f32 * 0.05).sin();
