@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn test_autosyncer_inc_t4_sin_f4() {
-        simple_logger::init_with_level(log::Level::Debug).unwrap();
+        // simple_logger::init_with_level(log::Level::Debug).unwrap();
 
         let packet_structure = parse_scope_packet_structure("JScope_T4F4").unwrap();
         let mut autosyncer = AutoSyncer::new(&packet_structure);
@@ -829,5 +829,40 @@ mod tests {
         }
         panic!("debug");
         */
+    }
+
+    #[test]
+    fn test_autosyncer_inc_t4_const_f4() {
+        // simple_logger::init_with_level(log::Level::Debug).unwrap();
+
+        let packet_structure = parse_scope_packet_structure("JScope_T4F4").unwrap();
+        let mut autosyncer = AutoSyncer::new(&packet_structure);
+
+        // some random bytes to offset the stream
+        autosyncer.extend_from_slice(&[0xA3, 0x17, 0xB9]);
+
+        assert!(autosyncer.try_find_alignment().0.is_infinite());
+        assert!(autosyncer.try_find_alignment().1.is_none());
+
+        // start appending packets with an increasing timestamp and a constant float
+        for i in 0..1000 {
+            let t = i as u32 * 100;
+            let y = 0.0 as f64;
+
+            autosyncer.extend_from_slice(&t.to_le_bytes());
+            autosyncer.extend_from_slice(&y.to_le_bytes());
+
+            if i % 10 == 0 {
+                let (entropy, maybe_offset) = autosyncer.try_find_alignment();
+
+                if i >= 3 {
+                    assert!(entropy.is_finite());
+                }
+
+                if i >= 980 {
+                    assert_eq!(maybe_offset, Some(3));
+                }
+            }
+        }
     }
 }
