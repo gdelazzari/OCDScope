@@ -578,146 +578,207 @@ fn synchronize_rtt_channel(
 
 struct AutoSyncer {
     packet_structure: RTTScopePacketStructure,
+
     buffer: Vec<u8>,
+
+    pmf: Vec<f64>,
+    last_decoded_at: Vec<Option<usize>>,
 }
 
 impl AutoSyncer {
-    fn new(packet_structure: &RTTScopePacketStructure) -> AutoSyncer {
+    pub fn new(packet_structure: &RTTScopePacketStructure) -> AutoSyncer {
+        let possible_align_offsets = packet_structure.packet_size();
+
+        // maximum entropy initial p.m.f.
+        let initial_pmf = vec![1.0 / possible_align_offsets as f64; possible_align_offsets];
+
         AutoSyncer {
             packet_structure: packet_structure.clone(),
             buffer: Vec::new(),
+            pmf: initial_pmf,
+            last_decoded_at: vec![None; possible_align_offsets],
         }
     }
 
-    fn extend_from_slice(&mut self, bytes: &[u8]) {
+    pub fn extend_from_slice(&mut self, bytes: &[u8]) {
+        log::trace!("extending with {:?}", bytes);
+
         self.buffer.extend_from_slice(bytes);
+
+        log::trace!("buffer extended to {:?}", self.buffer);
+
+        self.process_new_packets();
     }
 
-    fn try_find_alignment(&self) -> (f64, Option<usize>) {
-        let possible_align_offsets = self.packet_structure.packet_size();
+    pub fn pmf(&self) -> &[f64] {
+        &self.pmf
+    }
 
-        // ensure, for any align offset we might consider, that we have at least two full packets
-        // worth of bytes; this is equivalent to having the buffer be as big as at least three packets
-        if self.buffer.len() < self.packet_structure.packet_size() * 3 {
-            log::trace!("not enough bytes in buffer");
-            return (f64::INFINITY, None);
+    pub fn entropy(&self) -> f64 {
+        let total = self.pmf.iter().sum::<f64>();
+
+        if (total - 1.0).abs() >= 1e-6 {
+            log::warn!("pmf is not normalized (sums to {total})");
+        } else if total <= 0.0 {
+            log::warn!("pmf is broken (sums to {total})");
         }
 
-        // for each possible alignment offset, compute the probability of the stream being aligned
-        let aligned_probabilities = (0..possible_align_offsets)
-            .map(|offset| {
-                log::trace!("evaluating offset {offset}");
-                let aligned_stream = &self.buffer[offset..];
-                self.aligned_probability(aligned_stream)
-            })
-            .collect::<Vec<_>>();
-
-        // normalize the values to obtain a p.m.f.
-        let sum = aligned_probabilities.iter().sum::<f64>();
-        let pmf = aligned_probabilities
-            .iter()
-            .map(|&p| p / sum)
-            .collect::<Vec<_>>();
-
-        // compute entropy in [bit]
-        let entropy = -pmf
+        self.pmf
             .iter()
             .filter(|&&p| p > 0.0)
-            .map(|&p| p * p.log2())
-            .sum::<f64>();
+            .map(|&p| -p * p.log2())
+            .sum::<f64>()
+    }
 
-        log::debug!("AutoSync pmf={:?}, entropy={}", pmf, entropy);
-
+    pub fn aligned_on(&self) -> Option<usize> {
         let threshold = -(0.5 * f64::log2(0.5) * 2.0) / 2.0;
 
-        if entropy < threshold {
+        let mut best_alignment = None;
+
+        if self.entropy() < threshold {
             let mut best_p = 0.0;
-            let mut best_alignment = None;
-            for (i, p) in pmf.into_iter().enumerate() {
+            for (i, &p) in self.pmf.iter().enumerate() {
                 if p > best_p {
                     best_p = p;
                     best_alignment = Some(i);
                 }
             }
+        }
 
-            (entropy, best_alignment)
-        } else {
-            (entropy, None)
+        best_alignment
+    }
+
+    pub fn regularize(&mut self, lambda: f64) {
+        for p in self.pmf.iter_mut() {
+            *p += lambda;
+        }
+
+        self.normalize_pmf();
+    }
+
+    fn process_new_packets(&mut self) {
+        // TODO: we may drop data from the front of the buffer once we have processed it,
+        //       to avoid growing the memory usage unbounded
+
+        let possible_align_offsets = self.packet_structure.packet_size();
+
+        loop {
+            let decode_next_packets_from = self
+                .last_decoded_at
+                .first()
+                .unwrap()
+                .map(|i| i + self.packet_structure.packet_size())
+                .unwrap_or(0);
+
+            let need_buffer_up_to = decode_next_packets_from
+                + possible_align_offsets
+                + self.packet_structure.packet_size();
+
+            if need_buffer_up_to > self.buffer.len() {
+                break;
+            }
+
+            // can now process `possible_align_offsets` new packets
+            log::trace!("processing new set of packets from {decode_next_packets_from}");
+
+            debug_assert!((self.pmf.iter().sum::<f64>() - 1.0).abs() < 1e-6);
+
+            for offset in 0..possible_align_offsets {
+                let from = decode_next_packets_from + offset;
+                let to = from + self.packet_structure.packet_size();
+                let bytes = &self.buffer[from..to];
+
+                log::trace!("processing packet [{from} .. {to}]");
+
+                let prior = self.pmf[offset];
+
+                let aligned_p = self.process_packet_for_offset(offset, bytes, prior);
+
+                self.pmf[offset] = aligned_p;
+                self.last_decoded_at[offset] = Some(from);
+            }
+
+            self.normalize_pmf();
+
+            log::trace!("last_decoded_at={:?}", self.last_decoded_at);
+
+            log::debug!("pmf={:.06?}, entropy={}", self.pmf, self.entropy());
         }
     }
 
-    fn aligned_probability(&self, stream: &[u8]) -> f64 {
-        let packets = stream
-            .chunks_exact(self.packet_structure.packet_size())
-            .map(|chunk| {
-                self.packet_structure
-                    .decode_bytes(chunk)
-                    .expect("provided the correct amount of bytes by construction")
-            })
-            .collect::<Vec<_>>();
+    fn process_packet_for_offset(&self, offset: usize, bytes: &[u8], mut p: f64) -> f64 {
+        let packet = self
+            .packet_structure
+            .decode_bytes(bytes)
+            .expect("provided the right amount of bytes");
 
-        log::trace!(
-            "computing alignment probability over {} packets",
-            packets.len()
-        );
-
-        debug_assert!(packets.len() >= 2);
-
-        // start with a prior of 50% (maximum entropy)
-        let mut p = 0.5;
+        let maybe_previous_packet = self.last_decoded_at[offset].map(|from| {
+            let to = from + self.packet_structure.packet_size();
+            let bytes = &self.buffer[from..to];
+            self.packet_structure
+                .decode_bytes(bytes)
+                .expect("provided the right amount of bytes")
+        });
 
         // [criteria 1]: monotonic time increase, if applicable
         const P_INC_GIVEN_A: f64 = 1.0 - 1e-2;
         const P_INC_GIVEN_NA: f64 = 0.5; // analytical result
-        if self.packet_structure.has_u32_us_time {
-            for window in packets.windows(2) {
-                let prev = window[0].0.expect("packet said it had a timestamp");
-                let next = window[1].0.expect("packet said it had a timestamp");
 
-                let inc_marginal = P_INC_GIVEN_A * p + P_INC_GIVEN_NA * (1.0 - p);
+        if let (Some((Some(prev_t), _)), (Some(t), _)) = (&maybe_previous_packet, &packet) {
+            debug_assert!(self.packet_structure.has_u32_us_time);
 
-                let prev_p = p;
+            let inc_marginal = P_INC_GIVEN_A * p + P_INC_GIVEN_NA * (1.0 - p);
 
-                if next > prev {
-                    p = P_INC_GIVEN_A * p / inc_marginal;
+            let prev_p = p;
 
-                    log::trace!("detected time increment, p={prev_p} -> p={p}");
+            if t > prev_t {
+                p = P_INC_GIVEN_A * p / inc_marginal;
 
-                    debug_assert!(p >= prev_p);
-                } else {
-                    p = (1.0 - P_INC_GIVEN_A) * p / (1.0 - inc_marginal);
+                log::trace!(
+                    "({offset}) detected time increment ({prev_t} to {t}), p={prev_p} -> p={p}"
+                );
 
-                    log::trace!("detected time decrement, p={prev_p} -> p={p}");
+                debug_assert!(p >= prev_p);
+            } else {
+                p = (1.0 - P_INC_GIVEN_A) * p / (1.0 - inc_marginal);
 
-                    debug_assert!(p <= prev_p);
-                }
+                log::trace!(
+                    "({offset}) detected time decrement ({prev_t} to {t}), p={prev_p} -> p={p}"
+                );
+
+                debug_assert!(p <= prev_p);
             }
         }
 
         // [criteria 2]: float NaNs, if applicable
         const P_NAN_GIVEN_A: f64 = 1e-9;
         const P_NAN_GIVEN_NA: f64 = 1.0 / 256.0; // approximated analytical result
-        debug_assert!(P_NAN_GIVEN_A < P_NAN_GIVEN_NA);
-        for packet in &packets {
-            for (value, field) in packet.1.iter().zip(self.packet_structure.fields.iter()) {
-                if field.type_ == RTTScopePacketFieldType::Float {
-                    let nan_marginal = P_NAN_GIVEN_A * p + P_NAN_GIVEN_NA * (1.0 - p);
 
-                    let prev_p = p;
+        assert!(P_NAN_GIVEN_A < P_NAN_GIVEN_NA);
 
-                    if value.is_nan() {
-                        p = P_NAN_GIVEN_A * p / nan_marginal;
+        for (i, (value, field)) in packet
+            .1
+            .iter()
+            .zip(self.packet_structure.fields.iter())
+            .enumerate()
+        {
+            if field.type_ == RTTScopePacketFieldType::Float {
+                let nan_marginal = P_NAN_GIVEN_A * p + P_NAN_GIVEN_NA * (1.0 - p);
 
-                        log::trace!("detected NaN, p={prev_p} -> p={p}");
+                let prev_p = p;
 
-                        debug_assert!(p <= prev_p);
-                    } else {
-                        p = (1.0 - P_NAN_GIVEN_A) * p / (1.0 - nan_marginal);
+                if value.is_nan() {
+                    p = P_NAN_GIVEN_A * p / nan_marginal;
 
-                        log::trace!("detected not NaN, p={prev_p} -> p={p}");
+                    log::trace!("({offset}) [{i}] detected NaN, p={prev_p} -> p={p}");
 
-                        debug_assert!(p >= prev_p);
-                    }
+                    debug_assert!(p <= prev_p);
+                } else {
+                    p = (1.0 - P_NAN_GIVEN_A) * p / (1.0 - nan_marginal);
+
+                    log::trace!("({offset}) [{i}] detected not NaN, p={prev_p} -> p={p}");
+
+                    debug_assert!(p >= prev_p);
                 }
             }
         }
@@ -725,8 +786,14 @@ impl AutoSyncer {
         p
     }
 
-    fn drop_from_front(&mut self, count: usize) {
-        self.buffer = self.buffer[count..].to_vec();
+    fn normalize_pmf(&mut self) {
+        let total = self.pmf.iter().sum::<f64>();
+
+        debug_assert!(total > 0.0);
+
+        for p in &mut self.pmf {
+            *p /= total;
+        }
     }
 }
 
@@ -794,8 +861,8 @@ mod tests {
         // some random bytes to offset the stream
         autosyncer.extend_from_slice(&[0xA3, 0x17, 0xB9]);
 
-        assert!(autosyncer.try_find_alignment().0.is_infinite());
-        assert!(autosyncer.try_find_alignment().1.is_none());
+        assert!(autosyncer.entropy() > 0.0);
+        assert_eq!(autosyncer.aligned_on(), None);
 
         // start appending packets with an increasing timestamp and a sine wave float
         for i in 0..1000 {
@@ -805,34 +872,16 @@ mod tests {
             autosyncer.extend_from_slice(&t.to_le_bytes());
             autosyncer.extend_from_slice(&y.to_le_bytes());
 
-            if i % 10 == 0 {
-                let (entropy, maybe_offset) = autosyncer.try_find_alignment();
-
-                if i >= 3 {
-                    assert!(entropy.is_finite());
-                }
-
-                if i >= 980 {
-                    assert_eq!(maybe_offset, Some(3));
-                }
+            if autosyncer.aligned_on().is_some() {
+                break;
             }
         }
 
-        /*
-        let aligned = &autosyncer.buffer[3..];
-        let mut prev_t = 0;
-        for chunk in aligned.chunks_exact(packet_structure.packet_size()) {
-            let packet = packet_structure.decode_bytes(chunk).unwrap();
-            let t = packet.0.unwrap();
-            log::debug!("t = {}, delta = {}", t, t - prev_t);
-            prev_t = t;
-        }
-        panic!("debug");
-        */
+        assert_eq!(autosyncer.aligned_on(), Some(3));
     }
 
     #[test]
-    fn test_autosyncer_inc_t4_const_f4() {
+    fn test_autosyncer_inc_t4_const_f4_doesnt_converge() {
         // simple_logger::init_with_level(log::Level::Debug).unwrap();
 
         let packet_structure = parse_scope_packet_structure("JScope_T4F4").unwrap();
@@ -841,28 +890,52 @@ mod tests {
         // some random bytes to offset the stream
         autosyncer.extend_from_slice(&[0xA3, 0x17, 0xB9]);
 
-        assert!(autosyncer.try_find_alignment().0.is_infinite());
-        assert!(autosyncer.try_find_alignment().1.is_none());
+        assert!(autosyncer.entropy() > 0.0);
+        assert_eq!(autosyncer.aligned_on(), None);
 
         // start appending packets with an increasing timestamp and a constant float
-        for i in 0..1000 {
+        for i in 0..10000 {
             let t = i as u32 * 100;
-            let y = 0.0 as f64;
+            let y = 100.0 as f32;
+
+            autosyncer.extend_from_slice(&t.to_le_bytes());
+            autosyncer.extend_from_slice(&y.to_le_bytes());
+        }
+
+        // assert that we can't converge in this scenario
+        assert_eq!(autosyncer.aligned_on(), None);
+    }
+
+    #[test]
+    fn test_autosyncer_inc_t4_noise_f4() {
+        // simple_logger::init_with_level(log::Level::Debug).unwrap();
+
+        let packet_structure = parse_scope_packet_structure("JScope_T4F4").unwrap();
+        let mut autosyncer = AutoSyncer::new(&packet_structure);
+
+        // some random bytes to offset the stream
+        autosyncer.extend_from_slice(&[0xA3, 0x17, 0xB9]);
+
+        assert!(autosyncer.entropy() > 0.0);
+        assert_eq!(autosyncer.aligned_on(), None);
+        
+        // start appending packets with an increasing timestamp and a noise float
+        // (notice the very fast convergence here, usually in 4 steps)
+        let mut rand: u32 = 123;
+        for i in 0..8 {
+            let t = i as u32 * 100;
+            let y = rand as f32 / u32::MAX as f32 * 2.0 - 1.0;
+            
+            rand = ((1664525 * rand as u64 + 1013904223) % (u32::MAX as u64)) as u32;
 
             autosyncer.extend_from_slice(&t.to_le_bytes());
             autosyncer.extend_from_slice(&y.to_le_bytes());
 
-            if i % 10 == 0 {
-                let (entropy, maybe_offset) = autosyncer.try_find_alignment();
-
-                if i >= 3 {
-                    assert!(entropy.is_finite());
-                }
-
-                if i >= 980 {
-                    assert_eq!(maybe_offset, Some(3));
-                }
+            if autosyncer.aligned_on().is_some() {
+                break;
             }
         }
+
+        assert_eq!(autosyncer.aligned_on(), Some(3));
     }
 }
