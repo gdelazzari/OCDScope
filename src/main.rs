@@ -251,6 +251,8 @@ impl eframe::App for OCDScope {
             ui.heading("OCDScope");
             ui.group(|toolbar_group| {
                 toolbar_group.horizontal(|toolbar| {
+                    // TODO: fancy icons
+
                     if self.current_sampler.is_none() {
                         if toolbar.button("Connect...").clicked() {
                             self.show_connect_dialog = true;
@@ -262,19 +264,23 @@ impl eframe::App for OCDScope {
 
                             debug_assert!(self.current_sampler.is_none());
                         }
-
-                        // TODO: enable/disable buttons based on current state, or only show one
-                        // TODO: fancy icons
-                        if toolbar.button("Pause").clicked() {
-                            self.current_sampler.as_ref().unwrap().pause();
+                        
+                        match self.current_sampler_status {
+                            Some(sampler::Status::Sampling) => {
+                                if toolbar.button("Pause").clicked() {
+                                    self.current_sampler.as_ref().unwrap().pause();
+                                }
+                            }
+                            Some(sampler::Status::Paused) => {
+                                if toolbar.button("Resume").clicked() {
+                                    self.current_sampler.as_ref().unwrap().resume();
+                                }
+                            }
+                            _ => {}
                         }
-                        if toolbar.button("Resume").clicked() {
-                            self.current_sampler.as_ref().unwrap().resume();
-                        }
 
-                        // TODO: fancy icons
                         if let Some(status) = self.current_sampler_status {
-                            toolbar.label(format!("{:?}", status));
+                            toolbar.label(format!("{status:?}"));
                         }
 
                         toolbar.label(&self.last_sampler_info);
