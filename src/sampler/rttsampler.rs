@@ -576,6 +576,16 @@ fn synchronize_rtt_channel(
     Ok(())
 }
 
+/// Tries to automatically synchronize a JScope RTT byte stream to the packet boundary, provided
+/// the packet structure and some hypotheses on the data inside of the packets.
+/// 
+/// Those hypotheses are:
+/// - the integer timestamp, if present, is monotonically increasing with very high probability;
+/// - float values are NaNs with very low probability;
+/// - boolean 1-byte values contain either 0 or 1 with high probability.
+/// 
+/// The object will hold all of the bytes feeded into a buffer, which can be retrieved aligned
+/// with the [`Self::get_synced_data()`] method.
 struct AutoSyncer {
     packet_structure: RTTScopePacketStructure,
 
@@ -586,6 +596,7 @@ struct AutoSyncer {
 }
 
 impl AutoSyncer {
+    /// Creates a new [`AutoSyncer`] object with the provided RTT JScope packet structure.
     pub fn new(packet_structure: &RTTScopePacketStructure) -> AutoSyncer {
         let possible_align_offsets = packet_structure.packet_size();
 
@@ -600,6 +611,8 @@ impl AutoSyncer {
         }
     }
 
+    /// Appends received bytes to the internal buffer, which are considered by the automatic
+    /// syncing algorithm.
     pub fn extend_from_slice(&mut self, bytes: &[u8]) {
         log::trace!("extending with {:?}", bytes);
 
@@ -610,10 +623,13 @@ impl AutoSyncer {
         self.process_new_packets();
     }
 
+    /// Retrieves the current probability mass function (p.m.f.) of the alignment offset.
     pub fn pmf(&self) -> &[f64] {
         &self.pmf
     }
 
+    /// Computes the entropy of the p.m.f., which can be useful to understand how confident
+    /// the estimator is.
     pub fn entropy(&self) -> f64 {
         let total = self.pmf.iter().sum::<f64>();
 
@@ -630,6 +646,9 @@ impl AutoSyncer {
             .sum::<f64>()
     }
 
+    /// If the entropy is low enough, this method will return the
+    /// [MAP](https://en.wikipedia.org/wiki/Maximum_a_posteriori_estimation) estimated
+    /// alignment offset for the byte stream. Otherwise, `None` is returned.
     pub fn aligned_on(&self) -> Option<usize> {
         let threshold = -(0.5 * f64::log2(0.5) * 2.0) / 2.0;
 
@@ -648,6 +667,9 @@ impl AutoSyncer {
         best_alignment
     }
 
+    /// Manually adds some uncertainty to the p.m.f.
+    /// 
+    /// Can be useful to avoid numerical issues or to work-around the data model being bad.
     pub fn regularize(&mut self, lambda: f64) {
         for p in self.pmf.iter_mut() {
             *p += lambda;
@@ -656,11 +678,11 @@ impl AutoSyncer {
         self.normalize_pmf();
     }
 
-    /// Returns the synchronized bytes buffer, consuming the `AutoSyncer` object.
+    /// Returns the synchronized bytes buffer, consuming the [`AutoSyncer`] object.
     /// 
     /// If no alignment was found, returns `None`. Note that, in this case, all of the bytes
     /// and information collected for automatic alignment purposes is lost, so you may want
-    /// to make sure that `aligned_on().is_some()` before calling this.
+    /// to make sure that [`Self::aligned_on()`] returns `Some(_)` before calling this.
     pub fn get_synced_data(self) -> Option<Vec<u8>> {
         self.aligned_on().map(|i| self.buffer[i..].to_vec())
     }
