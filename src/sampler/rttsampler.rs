@@ -656,6 +656,15 @@ impl AutoSyncer {
         self.normalize_pmf();
     }
 
+    /// Returns the synchronized bytes buffer, consuming the `AutoSyncer` object.
+    /// 
+    /// If no alignment was found, returns `None`. Note that, in this case, all of the bytes
+    /// and information collected for automatic alignment purposes is lost, so you may want
+    /// to make sure that `aligned_on().is_some()` before calling this.
+    pub fn get_synced_data(self) -> Option<Vec<u8>> {
+        self.aligned_on().map(|i| self.buffer[i..].to_vec())
+    }
+
     fn process_new_packets(&mut self) {
         // TODO: we may drop data from the front of the buffer once we have processed it,
         //       to avoid growing the memory usage unbounded
@@ -918,14 +927,14 @@ mod tests {
 
         assert!(autosyncer.entropy() > 0.0);
         assert_eq!(autosyncer.aligned_on(), None);
-        
+
         // start appending packets with an increasing timestamp and a noise float
         // (notice the very fast convergence here, usually in 4 steps)
         let mut rand: u32 = 123;
         for i in 0..8 {
             let t = i as u32 * 100;
             let y = rand as f32 / u32::MAX as f32 * 2.0 - 1.0;
-            
+
             rand = ((1664525 * rand as u64 + 1013904223) % (u32::MAX as u64)) as u32;
 
             autosyncer.extend_from_slice(&t.to_le_bytes());
