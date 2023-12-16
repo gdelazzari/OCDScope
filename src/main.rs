@@ -374,7 +374,8 @@ impl eframe::App for OCDScope {
                         egui::DragValue::new(&mut self.buffer_auto_truncate_at)
                             .clamp_range(1.0..=3600.0)
                             .suffix(" s")
-                            .speed(0.1),
+                            .speed(0.1)
+                            .update_while_editing(false),
                     );
                 });
 
