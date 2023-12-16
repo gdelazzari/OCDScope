@@ -814,6 +814,11 @@ impl AutoSyncer {
             }
         }
 
+        // [criteria 3]: boolean 0/1, if applicable
+        const P_B01_GIVEN_A: f64 = 1.0 - 1e-2;
+        const P_B01_GIVEN_NA: f64 = 2.0 / 256.0;
+        // TODO
+
         p
     }
 
