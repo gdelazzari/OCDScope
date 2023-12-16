@@ -246,6 +246,11 @@ fn sampler_thread(
 
     let polling_period = Duration::from_millis(polling_interval as u64);
 
+    let mut autosyncer_if_syncing = Some(AutoSyncer::new(&packet_structure));
+
+    // TEMP: for testing not synchronizing
+    autosyncer_if_syncing = None;
+
     let mut rtt_channel =
         TcpStream::connect(rtt_channel_tcp_address).context("failed to connect to TCP stream")?;
 
@@ -254,9 +259,9 @@ fn sampler_thread(
     // synchronize the channel (pause the target, ensure the stream is empty, then
     // resume; the RTT writes in the ring-buffer are atomic, so this should work)
     // TODO: we could design an online auto-sync algorithm to avoid this
-    synchronize_rtt_channel(&mut openocd, &mut rtt_channel)?;
+    // synchronize_rtt_channel(&mut openocd, &mut rtt_channel)?;
 
-    info("RTT stream synchronized");
+    // info("RTT stream synchronized");
 
     rtt_channel
         .set_read_timeout(Some(polling_period))
@@ -311,10 +316,20 @@ fn sampler_thread(
                     Ok(n) if n == 0 => anyhow::bail!(
                         "RTT stream socket closed by remote end (OpenOCD terminated externally?)"
                     ),
-                    Ok(n) if n > 0 => {
-                        buffer.extend_from_slice(&read_buffer[0..n]);
-                    }
+                    Ok(n) if n > 0 => match &mut autosyncer_if_syncing {
+                        Some(autosyncer) => autosyncer.extend_from_slice(&read_buffer[0..n]),
+                        None => buffer.extend_from_slice(&read_buffer[0..n]),
+                    },
                     _ => unreachable!(),
+                }
+
+                if let Some(autosyncer) = autosyncer_if_syncing.take() {
+                    if let Some(offset) = autosyncer.aligned_on() {
+                        info(&format!("RTT stream auto-synced at {offset}"));
+                        buffer = autosyncer.get_synced_data().unwrap();
+                    } else {
+                        autosyncer_if_syncing = Some(autosyncer);
+                    }
                 }
 
                 while buffer.len() >= packet_size {
@@ -350,12 +365,19 @@ fn sampler_thread(
                     let measured_rate = rate_measurement_samples_received as f64
                         / (now - previous_rate_measurement_instant).as_secs_f64();
 
+                    if let Some(autosyncer) = &autosyncer_if_syncing {
+                        log::debug!("autosync entropy {}", autosyncer.entropy());
+                    }
+
                     log::debug!("measured rate {} samples/s", measured_rate);
 
-                    if let Err(err) = notifications_tx.send(Notification::Info(format!(
-                        "{} samples/s",
-                        measured_rate.round() as i64
-                    ))) {
+                    let info_message = if let Some(autosyncer) = &autosyncer_if_syncing {
+                        format!("autosync entropy {}", autosyncer.entropy())
+                    } else {
+                        format!("{} samples/s", measured_rate.round() as i64)
+                    };
+
+                    if let Err(err) = notifications_tx.send(Notification::Info(info_message)) {
                         log::error!("Failed to send info notification: {:?}", err);
                     }
 
@@ -578,12 +600,12 @@ fn synchronize_rtt_channel(
 
 /// Tries to automatically synchronize a JScope RTT byte stream to the packet boundary, provided
 /// the packet structure and some hypotheses on the data inside of the packets.
-/// 
+///
 /// Those hypotheses are:
 /// - the integer timestamp, if present, is monotonically increasing with very high probability;
 /// - float values are NaNs with very low probability;
 /// - boolean 1-byte values contain either 0 or 1 with high probability.
-/// 
+///
 /// The object will hold all of the bytes feeded into a buffer, which can be retrieved aligned
 /// with the [`Self::get_synced_data()`] method.
 struct AutoSyncer {
@@ -668,7 +690,7 @@ impl AutoSyncer {
     }
 
     /// Manually adds some uncertainty to the p.m.f.
-    /// 
+    ///
     /// Can be useful to avoid numerical issues or to work-around the data model being bad.
     pub fn regularize(&mut self, lambda: f64) {
         for p in self.pmf.iter_mut() {
@@ -679,7 +701,7 @@ impl AutoSyncer {
     }
 
     /// Returns the synchronized bytes buffer, consuming the [`AutoSyncer`] object.
-    /// 
+    ///
     /// If no alignment was found, returns `None`. Note that, in this case, all of the bytes
     /// and information collected for automatic alignment purposes is lost, so you may want
     /// to make sure that [`Self::aligned_on()`] returns `Some(_)` before calling this.
