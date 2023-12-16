@@ -26,6 +26,13 @@ pub fn find_free_tcp_port() -> std::io::Result<u16> {
     Ok(port)
 }
 
+pub fn color_for_id(id: u32) -> ecolor::Color32 {
+    // from PlotUi::auto_color()
+    let golden_ratio = (5.0_f32.sqrt() - 1.0) / 2.0; // 0.61803398875
+    let h = id as f32 * golden_ratio;
+    ecolor::Hsva::new(h, 0.85, 0.5, 1.0).into()
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};

@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
+use egui::Color32;
+
 mod buffer;
 mod export;
 mod gdbremote;
@@ -23,15 +25,17 @@ enum SamplingMethod {
 pub struct SignalConfig {
     id: u32,
     name: String,
+    color: Color32,
     enabled: bool,
     scale: f64,
 }
 
 impl SignalConfig {
-    fn new(id: u32, name: String) -> SignalConfig {
+    fn new(id: u32, name: String, color: Option<Color32>) -> SignalConfig {
         SignalConfig {
             id,
             name,
+            color: color.unwrap_or_else(|| utils::color_for_id(id)),
             enabled: false,
             scale: 1.0.into(),
         }
@@ -223,7 +227,7 @@ impl OCDScope {
         self.signals = sampler
             .available_signals()
             .into_iter()
-            .map(|(id, name)| SignalConfig::new(id, name))
+            .map(|(id, name)| SignalConfig::new(id, name, None))
             .collect();
 
         if let Some(first) = self.signals.iter_mut().next() {
@@ -506,15 +510,16 @@ impl eframe::App for OCDScope {
                                 debug_assert!(width >= 0.0);
                                 let margin = if width == 0.0 { 0.1 } else { width };
 
-                                let line = Line::new(
-                                    buffer.plot_points(
-                                        x_min - margin / 2.0,
-                                        x_max + margin / 2.0,
-                                        signal.scale,
-                                    ),
-                                    // buffer.plot_points_generator(x_min - margin / 2.0, x_max + margin / 2.0, 1000),
-                                )
-                                .name(signal.name.clone());
+                                let plot_points = buffer.plot_points(
+                                    x_min - margin / 2.0,
+                                    x_max + margin / 2.0,
+                                    signal.scale,
+                                );
+                                // buffer.plot_points_generator(x_min - margin / 2.0, x_max + margin / 2.0, 1000);
+
+                                let line = Line::new(plot_points)
+                                    .name(signal.name.clone())
+                                    .color(signal.color);
 
                                 plot_ui.line(line);
                             }
@@ -563,6 +568,7 @@ impl eframe::App for OCDScope {
                             self.signals.push(SignalConfig::new(
                                 self.memory_address_to_add,
                                 format!("0x{:08x}", self.memory_address_to_add),
+                                None,
                             ));
 
                             self.show_add_address_dialog = false;

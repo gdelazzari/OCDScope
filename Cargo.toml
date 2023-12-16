@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 cpp_demangle = "0.4"
 eframe = "0.24"
+ecolor = "*"
 egui_plot = "0.24"
 elf = "0.7"
 log = "0.4"

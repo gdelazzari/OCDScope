@@ -1874,6 +1874,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cpp_demangle",
+ "ecolor",
  "eframe",
  "egui_plot",
  "elf",
