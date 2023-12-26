@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     sync::mpsc,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::Context;
@@ -210,7 +210,7 @@ fn sampler_thread(
 
     let mut status = Status::Initializing;
     let mut last_sampled_at = Instant::now();
-    let start = Instant::now();
+    let start = SystemTime::now();
     let mut active_memory_addresses = Vec::new();
 
     loop {
@@ -290,20 +290,29 @@ fn sampler_thread(
                 //   for the debugger, or other events that might happend after issuing a GDB "continue"
                 //   command to the OpenOCD
 
-                let sampled_at = Instant::now();
+                let mut requested_at = None;
+                let mut received_at = None;
+
                 let mut samples = Vec::new();
 
                 for &memory_address in &active_memory_addresses {
-                    // TODO: support different value sizes?
+                    // TODO: support different value sizes and types?
                     log::trace!("sending GDB memory read command");
-                    gdb.send_packet(&format!("m {:08x},4", memory_address))?;
+
+                    let tx_timestamp = gdb.send_packet(&format!("m {:08x},4", memory_address))?;
+
+                    // TODO: we actually have different timestamps for each sample
+                    requested_at.get_or_insert(tx_timestamp.get_systemtime());
 
                     // TODO: handle timeouts
                     loop {
                         log::trace!("waiting GDB response");
-                        let (response, timestamp) = gdb.read_response()?;
+                        let (response, rx_timestamp) = gdb.read_response()?;
 
                         log::trace!("{:?} : {:?}", response, response.to_string());
+
+                        // TODO: we actually have different timestamps for each sample
+                        received_at.get_or_insert(rx_timestamp.get_systemtime());
 
                         match response {
                             // OpenOCD sends empty 'O' packets during target execution to keep the
@@ -336,8 +345,21 @@ fn sampler_thread(
 
                 if samples.len() > 0 {
                     // TODO: conversion from u128 to u64 could fail
-                    let timestamp = (sampled_at - start).as_micros() as u64;
-                    sampled_tx.send((timestamp, samples))?;
+                    let request_timestamp = requested_at
+                        .expect("should have a request timestamp")
+                        .duration_since(start)
+                        .map(|d| d.as_micros())
+                        .unwrap_or(0) as u64;
+
+                    let response_timestamp = received_at
+                        .expect("should have a response timestamp")
+                        .duration_since(start)
+                        .map(|d| d.as_micros())
+                        .unwrap_or(0) as u64;
+
+                    let averaged_timestamp = (request_timestamp + response_timestamp) / 2;
+
+                    sampled_tx.send((averaged_timestamp, samples))?;
                 }
             }
             Status::Paused => match command_rx.recv() {
