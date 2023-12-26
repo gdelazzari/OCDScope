@@ -67,6 +67,10 @@ impl TimestampedTcpStream {
         })
     }
 
+    pub fn set_read_timeout(&mut self, dur: Option<Duration>) -> Result<()> {
+        self.stream.set_read_timeout(dur)
+    }
+
     pub fn receive(&mut self, buf: &mut [u8]) -> Result<(usize, SystemTime)> {
         if self.timestamping_enabled {
             #[cfg(unix)]
