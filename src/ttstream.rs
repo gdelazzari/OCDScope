@@ -106,8 +106,6 @@ impl TimestampedTcpStream {
             {
                 use libc::*;
 
-                const SCM_TIMESTAMPING_NEW: c_int = SO_TIMESTAMPING_NEW;
-
                 let socket_fd = self.stream.as_fd();
 
                 // read timestamp of received message (2.1.2 https://www.kernel.org/doc/html/latest/networking/timestamping.html)
@@ -143,65 +141,16 @@ impl TimestampedTcpStream {
 
                 log::trace!("received {n} bytes");
 
-                let mut cmsg_ptr = unsafe { CMSG_FIRSTHDR(ptr::addr_of!(rx_msg_header)) };
-                let mut found_timestamp = None;
-                while !cmsg_ptr.is_null() {
-                    let cmsg = unsafe { cmsg_ptr.read() };
+                let timestamp = match get_timestamp_cmsg(ptr::addr_of!(rx_msg_header)) {
+                    Ok(timestamp) => Timestamp::ByTcpStack(timestamp),
+                    Err(err) => {
+                        log::error!("failed to get RX timestamp from TCP stack, returning timestamp with fallback mechanism: {:?}", err);
 
-                    log::trace!("inspecting control message {cmsg_ptr:?} {cmsg:?}");
-
-                    match (cmsg.cmsg_level, cmsg.cmsg_type) {
-                        (SOL_SOCKET, SCM_TIMESTAMPING_NEW) => {
-                            let data_ptr = unsafe { CMSG_DATA(cmsg_ptr) };
-
-                            let timespecs = unsafe {
-                                let mut timespecs: MaybeUninit<[timespec; 3]> =
-                                    MaybeUninit::uninit();
-
-                                ptr::copy_nonoverlapping(
-                                    data_ptr,
-                                    timespecs.as_mut_ptr().cast(),
-                                    size_of::<[timespec; 3]>(),
-                                );
-
-                                timespecs.assume_init()
-                            };
-
-                            let timespec = timespecs[0];
-
-                            debug_assert!(timespec.tv_sec >= 0);
-                            debug_assert!(
-                                timespec.tv_nsec >= 0 && timespec.tv_nsec <= u32::MAX as i64
-                            );
-
-                            log::trace!("found RX timespec = {:?}", timespec);
-
-                            found_timestamp = Some(
-                                std::time::UNIX_EPOCH
-                                    + Duration::new(
-                                        timespec.tv_sec as u64,
-                                        timespec.tv_nsec as u32,
-                                    ),
-                            );
-                        }
-                        (level, type_) => {
-                            log::warn!("ignoring unexpected cmsg (level={level}, type={type_})");
-                        }
-                    }
-
-                    unsafe {
-                        cmsg_ptr = CMSG_NXTHDR(ptr::addr_of!(rx_msg_header), cmsg_ptr);
-                    }
-                }
-
-                return match found_timestamp {
-                    Some(timestamp) => Ok((n as usize, Timestamp::ByTcpStack(timestamp))),
-                    None => {
-                        log::error!("SCM_TIMESTAMPING_NEW control message not found, returning timestamp with fallback mechanism");
-
-                        Ok((n as usize, Timestamp::Fallback(fallback_timestamp)))
+                        Timestamp::Fallback(fallback_timestamp)
                     }
                 };
+
+                return Ok((n as usize, timestamp));
             }
 
             #[cfg(not(any(unix)))]
@@ -259,13 +208,14 @@ impl TimestampedTcpStream {
                     ));
                 }
 
-                match get_tx_timestamp(socket_fd) {
+                return match get_tx_timestamp(socket_fd) {
                     Ok(timestamp) => Ok(Timestamp::ByTcpStack(timestamp)),
                     Err(err) => {
-                        log::error!("failed to get timestamp from TCP stack: {:?}", err);
+                        log::error!("failed to get TX timestamp from TCP stack, returning timestamp with fallback mechanism: {:?}", err);
+
                         Ok(Timestamp::Fallback(fallback_timestamp))
                     }
-                }
+                };
             }
 
             #[cfg(not(any(unix)))]
@@ -283,8 +233,6 @@ impl TimestampedTcpStream {
 
 fn get_tx_timestamp(socket_fd: BorrowedFd) -> anyhow::Result<SystemTime> {
     use libc::*;
-
-    const SCM_TIMESTAMPING_NEW: c_int = SO_TIMESTAMPING_NEW;
 
     // read timestamp of sent message (2.1.1 https://www.kernel.org/doc/html/latest/networking/timestamping.html)
 
@@ -321,7 +269,15 @@ fn get_tx_timestamp(socket_fd: BorrowedFd) -> anyhow::Result<SystemTime> {
         )));
     }
 
-    let mut cmsg_ptr = unsafe { CMSG_FIRSTHDR(ptr::addr_of!(errqueue_rx_msg_header)) };
+    get_timestamp_cmsg(ptr::addr_of!(errqueue_rx_msg_header))
+}
+
+fn get_timestamp_cmsg(msg_header: *const libc::msghdr) -> anyhow::Result<SystemTime> {
+    use libc::*;
+
+    const SCM_TIMESTAMPING_NEW: c_int = SO_TIMESTAMPING_NEW;
+
+    let mut cmsg_ptr = unsafe { CMSG_FIRSTHDR(msg_header) };
     let mut found_timestamp = None;
     while !cmsg_ptr.is_null() {
         let cmsg = unsafe { cmsg_ptr.read() };
@@ -349,7 +305,7 @@ fn get_tx_timestamp(socket_fd: BorrowedFd) -> anyhow::Result<SystemTime> {
                 debug_assert!(timespec.tv_sec >= 0);
                 debug_assert!(timespec.tv_nsec >= 0 && timespec.tv_nsec <= u32::MAX as i64);
 
-                log::trace!("found TX timespec = {:?}", timespec);
+                log::trace!("found timespec = {:?}", timespec);
 
                 found_timestamp = Some(
                     std::time::UNIX_EPOCH
@@ -362,7 +318,7 @@ fn get_tx_timestamp(socket_fd: BorrowedFd) -> anyhow::Result<SystemTime> {
         }
 
         unsafe {
-            cmsg_ptr = CMSG_NXTHDR(ptr::addr_of!(errqueue_rx_msg_header), cmsg_ptr);
+            cmsg_ptr = CMSG_NXTHDR(msg_header, cmsg_ptr);
         }
     }
 
