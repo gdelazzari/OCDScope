@@ -1,9 +1,11 @@
 use std::io::{Error, Read, Result, Write};
 use std::mem::{size_of, MaybeUninit};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::ptr;
 use std::time::{Duration, SystemTime};
+
+#[cfg(unix)]
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 
 use anyhow::Context;
 
@@ -231,6 +233,7 @@ impl TimestampedTcpStream {
     }
 }
 
+#[cfg(unix)]
 fn get_tx_timestamp(socket_fd: BorrowedFd) -> anyhow::Result<SystemTime> {
     use libc::*;
 
@@ -272,6 +275,7 @@ fn get_tx_timestamp(socket_fd: BorrowedFd) -> anyhow::Result<SystemTime> {
     get_timestamp_cmsg(ptr::addr_of!(errqueue_rx_msg_header))
 }
 
+#[cfg(unix)]
 fn get_timestamp_cmsg(msg_header: *const libc::msghdr) -> anyhow::Result<SystemTime> {
     use libc::*;
 
