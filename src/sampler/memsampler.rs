@@ -190,17 +190,21 @@ fn sampler_thread(
 
     gdb.set_timeout(Duration::from_millis(2000));
 
-    if !gdb.read_response()?.is_ack() {
+    if !gdb.read_response()?.0.is_ack() {
         anyhow::bail!("expected initial ACK");
     }
+    log::trace!("got initial GDB ACK");
 
+    log::trace!("asking GDB to QStartNoAckMode");
     gdb.send_packet("QStartNoAckMode")?;
-    if !gdb.read_response()?.is_ack() {
+    if !gdb.read_response()?.0.is_ack() {
         anyhow::bail!("expected ACK for QStartNoAckMode");
     }
-    if !gdb.read_response()?.is_packet_with("OK") {
+    log::trace!("got ACK for QStartNoAckMode");
+    if !gdb.read_response()?.0.is_packet_with("OK") {
         anyhow::bail!("expected OK for QStartNoAckMode");
     }
+    log::trace!("got OK for QStartNoAckMode");
 
     let period = Duration::from_secs_f64(1.0 / rate);
 
@@ -215,7 +219,9 @@ fn sampler_thread(
         match status {
             Status::Initializing => {
                 // make target continue
+                log::trace!("sending GDB continue command");
                 gdb.send_packet("c")?;
+                log::trace!("target resumed");
 
                 maybe_new_status = Some(Status::Sampling);
                 last_sampled_at = Instant::now();
@@ -289,11 +295,13 @@ fn sampler_thread(
 
                 for &memory_address in &active_memory_addresses {
                     // TODO: support different value sizes?
+                    log::trace!("sending GDB memory read command");
                     gdb.send_packet(&format!("m {:08x},4", memory_address))?;
 
                     // TODO: handle timeouts
                     loop {
-                        let response = gdb.read_response()?;
+                        log::trace!("waiting GDB response");
+                        let (response, timestamp) = gdb.read_response()?;
 
                         log::trace!("{:?} : {:?}", response, response.to_string());
 
