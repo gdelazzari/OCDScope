@@ -1878,6 +1878,7 @@ dependencies = [
  "eframe",
  "egui_plot",
  "elf",
+ "libc",
  "log",
  "npyz",
  "rfd",

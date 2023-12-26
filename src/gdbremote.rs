@@ -1,10 +1,12 @@
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
+use crate::ttstream::{TimestampedTcpStream, Timestamp};
+
 const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
+const MAX_PACKET_SIZE: usize = 1024;
 
 pub type Result<T> = std::result::Result<T, GDBRemoteError>;
 
@@ -52,7 +54,9 @@ fn parse_gdb_packet(bytes: &[u8]) -> Result<&[u8]> {
         .ok_or(GDBRemoteError::ParseError("no final # found".into()))?;
 
     if bytes.len() < pound_i + 3 {
-        return Err(GDBRemoteError::ParseError("packet too short (can't hold checksum)".into()));
+        return Err(GDBRemoteError::ParseError(
+            "packet too short (can't hold checksum)".into(),
+        ));
     }
 
     let contents = &bytes[1..pound_i];
@@ -78,9 +82,11 @@ fn parse_gdb_packet(bytes: &[u8]) -> Result<&[u8]> {
 }
 
 pub struct GDBRemote {
-    stream: TcpStream,
+    stream: TimestampedTcpStream,
     timeout: Duration,
     data_buffer: Vec<u8>,
+
+    last_rx_packet_timestamp: Option<Timestamp>,
 }
 
 #[derive(Debug)]
@@ -121,7 +127,7 @@ impl Response {
 
 // Private helpers
 impl GDBRemote {
-    fn feed_buffer_with_byte(&mut self, timeout_at: Instant) -> Result<()> {
+    fn feed_buffer_from_stream(&mut self, timeout_at: Instant) -> Result<()> {
         use std::io::ErrorKind;
 
         let now = Instant::now();
@@ -134,20 +140,34 @@ impl GDBRemote {
 
         self.stream.set_read_timeout(Some(timeout))?;
 
-        let mut buffer = [0 as u8; 1];
-        match self.stream.read(&mut buffer) {
-            Ok(0) => return Err(GDBRemoteError::EndOfStream),
-            Ok(1) => {
-                self.data_buffer.push(buffer[0]);
-                return Ok(());
+        let mut buffer = [0 as u8; MAX_PACKET_SIZE];
+        match self.stream.receive(&mut buffer) {
+            Ok((0, _)) => return Err(GDBRemoteError::EndOfStream),
+            Ok((n, timestamp)) => {
+                log::trace!("feeding buffer with {n} bytes");
+
+                let received = &buffer[..n];
+
+                self.data_buffer.extend_from_slice(received);
+
+                if received.contains(&b'$') || received.contains(&b'+') {
+                    // if the start byte or the ACK byte is in the received
+                    // packet data, keep track of the timestamp of this TCP
+                    // packet for association to the GDB response
+                    self.last_rx_packet_timestamp = Some(timestamp);
+                }
+
+                Ok(())
             }
-            Ok(_) => unreachable!("asked for 1 byte, should have gotten 0 or 1"),
             Err(err)
                 if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut =>
             {
                 Err(GDBRemoteError::Timeout)
             }
-            Err(err) => Err(err.into()),
+            Err(err) => {
+                log::error!("unexpected receive error: {err:?}");
+                Err(err.into())
+            },
         }
     }
 
@@ -172,12 +192,13 @@ impl GDBRemote {
 // Public functions
 impl GDBRemote {
     pub fn connect<A: ToSocketAddrs>(address: A) -> Result<GDBRemote> {
-        let stream = TcpStream::connect(address)?;
+        let stream = TimestampedTcpStream::connect(address)?;
 
         Ok(GDBRemote {
             stream,
             timeout: DEFAULT_TIMEOUT,
             data_buffer: Vec::new(),
+            last_rx_packet_timestamp: None,
         })
     }
 
@@ -185,29 +206,37 @@ impl GDBRemote {
         self.timeout = timeout;
     }
 
-    pub fn read_response(&mut self) -> Result<Response> {
+    pub fn read_response(&mut self) -> Result<(Response, Timestamp)> {
         // TODO: handle corrupted stream
 
         let timeout_at = Instant::now() + self.timeout;
 
         loop {
             if let Some(()) = self.eat_ack() {
-                return Ok(Response::ACK);
+                let timestamp = self
+                    .last_rx_packet_timestamp
+                    .expect("if we received an ACK packet, the timestamp should be set");
+
+                return Ok((Response::ACK, timestamp));
             }
 
             if let Ok(data) = self.eat_packet() {
-                return Ok(Response::Packet(data));
+                let timestamp = self
+                    .last_rx_packet_timestamp
+                    .expect("if we received a data packet, the timestamp should be set");
+
+                return Ok((Response::Packet(data), timestamp));
             }
 
             // couldn't eat an ACK nor a packet, keep feeding the buffer;
             // errors and timeout will propagate
-            self.feed_buffer_with_byte(timeout_at)?;
+            self.feed_buffer_from_stream(timeout_at)?;
         }
     }
 
-    pub fn send_packet(&mut self, contents: &str) -> Result<()> {
-        self.stream.write_all(&build_gdb_packet(contents))?;
+    pub fn send_packet(&mut self, contents: &str) -> Result<Timestamp> {
+        let timestamp = self.stream.send(&build_gdb_packet(contents))?;
 
-        Ok(())
+        Ok(timestamp)
     }
 }

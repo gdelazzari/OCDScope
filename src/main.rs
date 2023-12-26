@@ -10,6 +10,7 @@ mod export;
 mod gdbremote;
 mod openocd;
 mod sampler;
+mod ttstream;
 mod utils;
 
 use buffer::SampleBuffer;
