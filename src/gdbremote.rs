@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
+const MAX_PACKET_SIZE: usize = 1024;
 
 pub type Result<T> = std::result::Result<T, GDBRemoteError>;
 
@@ -52,7 +53,9 @@ fn parse_gdb_packet(bytes: &[u8]) -> Result<&[u8]> {
         .ok_or(GDBRemoteError::ParseError("no final # found".into()))?;
 
     if bytes.len() < pound_i + 3 {
-        return Err(GDBRemoteError::ParseError("packet too short (can't hold checksum)".into()));
+        return Err(GDBRemoteError::ParseError(
+            "packet too short (can't hold checksum)".into(),
+        ));
     }
 
     let contents = &bytes[1..pound_i];
@@ -121,7 +124,7 @@ impl Response {
 
 // Private helpers
 impl GDBRemote {
-    fn feed_buffer_with_byte(&mut self, timeout_at: Instant) -> Result<()> {
+    fn feed_buffer_from_stream(&mut self, timeout_at: Instant) -> Result<()> {
         use std::io::ErrorKind;
 
         let now = Instant::now();
@@ -134,14 +137,14 @@ impl GDBRemote {
 
         self.stream.set_read_timeout(Some(timeout))?;
 
-        let mut buffer = [0 as u8; 1];
+        let mut buffer = [0 as u8; MAX_PACKET_SIZE];
         match self.stream.read(&mut buffer) {
             Ok(0) => return Err(GDBRemoteError::EndOfStream),
-            Ok(1) => {
-                self.data_buffer.push(buffer[0]);
-                return Ok(());
+            Ok(n) => {
+                log::trace!("feeding buffer with {n} bytes");
+                self.data_buffer.extend_from_slice(&buffer[..n]);
+                Ok(())
             }
-            Ok(_) => unreachable!("asked for 1 byte, should have gotten 0 or 1"),
             Err(err)
                 if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut =>
             {
@@ -201,7 +204,7 @@ impl GDBRemote {
 
             // couldn't eat an ACK nor a packet, keep feeding the buffer;
             // errors and timeout will propagate
-            self.feed_buffer_with_byte(timeout_at)?;
+            self.feed_buffer_from_stream(timeout_at)?;
         }
     }
 
