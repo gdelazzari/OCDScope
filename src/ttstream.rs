@@ -15,13 +15,13 @@ use std::time::{Duration, SystemTime};
 ///
 /// Unix-specific implementation with reference to the documentation in
 /// https://www.kernel.org/doc/html/latest/networking/timestamping.html.
-pub struct TimestampedTCPStream {
+pub struct TimestampedTcpStream {
     stream: TcpStream,
     timestamping_enabled: bool,
 }
 
-impl TimestampedTCPStream {
-    pub fn connect<A: ToSocketAddrs>(addr: A) -> Result<TimestampedTCPStream> {
+impl TimestampedTcpStream {
+    pub fn connect<A: ToSocketAddrs>(addr: A) -> Result<TimestampedTcpStream> {
         let stream = TcpStream::connect(addr)?;
 
         let mut timestamping_enabled = false;
@@ -61,7 +61,7 @@ impl TimestampedTCPStream {
             // `socket_fd` is dropped here and releases the borrow of the `BorrowedFd` object
         }
 
-        Ok(TimestampedTCPStream {
+        Ok(TimestampedTcpStream {
             stream,
             timestamping_enabled,
         })
@@ -371,7 +371,7 @@ mod tests {
         };
 
         let ttstream =
-            TimestampedTCPStream::connect(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).unwrap();
+            TimestampedTcpStream::connect(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).unwrap();
 
         barrier.wait();
 
@@ -421,7 +421,7 @@ mod tests {
         };
 
         let mut ttstream =
-            TimestampedTCPStream::connect(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).unwrap();
+            TimestampedTcpStream::connect(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).unwrap();
 
         assert!(ttstream.timestamping_enabled);
 
@@ -476,7 +476,7 @@ mod tests {
         };
 
         let mut ttstream =
-            TimestampedTCPStream::connect(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).unwrap();
+            TimestampedTcpStream::connect(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).unwrap();
 
         assert!(ttstream.timestamping_enabled);
 
