@@ -15,10 +15,10 @@ use anyhow::Context;
 /// When available, kernel timestamping is used (SO_TIMESTAMPING_NEW socket option) for
 /// superior accuracy.
 /// If the system is not Unix or the feature is not available, the stream falls back to
-/// manual timestamping (acquiring it with `SystemTime::now()`).
+/// manual timestamping (acquiring it with [`SystemTime::now`]).
 ///
 /// Unix-specific implementation with reference to the documentation in
-/// https://www.kernel.org/doc/html/latest/networking/timestamping.html.
+/// <https://www.kernel.org/doc/html/latest/networking/timestamping.html>.
 pub struct TimestampedTcpStream {
     stream: TcpStream,
     timestamping_enabled: bool,
@@ -35,7 +35,7 @@ pub enum Timestamp {
 }
 
 impl Timestamp {
-    /// Return the `SystemTime` of this `Timestamp``, whether it has been provided
+    /// Return the [`SystemTime`] of this [`Timestamp`], whether it has been provided
     /// by the TCP stack or obtained manually with the fallback mechanism.
     pub fn get_systemtime(&self) -> SystemTime {
         self.clone().into()

@@ -455,10 +455,9 @@ impl eframe::App for OCDScope {
 
                 let mut plot = Plot::new("main")
                     .legend(Legend::default())
-                    .allow_zoom(egui::Vec2b::new(true, false))
+                    .allow_zoom([true, false])
                     .y_axis_width(2)
-                    .auto_bounds_x()
-                    .auto_bounds_y()
+                    .auto_bounds([true, true].into())
                     .label_formatter(move |name, value| {
                         if let Some(scale) = signal_scales.get(name) {
                             format!("{}\nx: {}\ny: {}", name, value.x, value.y / scale)
