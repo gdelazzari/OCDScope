@@ -870,15 +870,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cpp_demangle"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e8227005286ec39567949b33df9896bcadfa6051bccca2488129f108ca23119"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2145,7 +2136,6 @@ name = "ocdscope"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cpp_demangle",
  "ecolor",
  "eframe",
  "egui_plot",

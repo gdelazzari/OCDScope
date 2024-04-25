@@ -9,7 +9,6 @@ eframe = "0.27"
 ecolor = "0.27"
 egui_plot = "0.27"
 
-cpp_demangle = "0.4"
 elf = "0.7"
 log = "0.4"
 rfd = "0.14"
