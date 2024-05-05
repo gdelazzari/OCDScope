@@ -5,6 +5,8 @@ use eframe::egui;
 
 use egui::Color32;
 
+use egui_file_dialog::FileDialog;
+
 mod buffer;
 mod export;
 mod gdbremote;
@@ -66,6 +68,7 @@ struct OCDScope {
     max_time: u64,
 
     gdb_address: String,
+    elf_file_dialog: FileDialog,
     elf_filename: Option<PathBuf>,
     telnet_address: String,
     sample_rate: f64,
@@ -73,6 +76,8 @@ struct OCDScope {
     rtt_relative_time: bool,
 
     memory_address_to_add: u32,
+
+    export_file_dialog: FileDialog,
 }
 
 impl OCDScope {
@@ -94,6 +99,7 @@ impl OCDScope {
             max_time: 0,
             sampling_method: SamplingMethod::Simulated,
             gdb_address: "127.0.0.1:3333".into(),
+            elf_file_dialog: FileDialog::new().title("Select an ELF file"),
             elf_filename: None,
             telnet_address: "127.0.0.1:4444".into(),
             sample_rate: 1000.0,
@@ -101,6 +107,7 @@ impl OCDScope {
             rtt_relative_time: false,
             signals: Vec::new(),
             memory_address_to_add: 0xBEEF1010,
+            export_file_dialog: FileDialog::new().title("Save the exported file"),
         }
     }
 
@@ -265,7 +272,7 @@ impl eframe::App for OCDScope {
 
                             debug_assert!(self.current_sampler.is_none());
                         }
-                        
+
                         match self.current_sampler_status {
                             Some(sampler::Status::Sampling) => {
                                 if toolbar.button("Pause").clicked() {
@@ -312,49 +319,48 @@ impl eframe::App for OCDScope {
                 });
 
                 if ui.button("Export data...").clicked() {
-                    let maybe_filename = rfd::FileDialog::new()
-                        .add_filter("CSV file (*.csv)", &["csv"])
-                        .add_filter("Numpy data (*.npy)", &["npy"])
-                        .set_file_name("export.csv")
-                        .save_file();
-                    if let Some(filename) = maybe_filename {
-                        match filename
-                            .extension()
-                            .map(|s| s.to_str().unwrap().to_ascii_lowercase())
-                        {
-                            Some(ext) if ext == "csv" => {
-                                log::info!("exporting CSV file to {:?}", filename);
+                    self.export_file_dialog.save_file();
+                }
 
-                                match export::write_csv(&filename, &self.signals, &self.samples) {
-                                    Ok(_) => log::info!("export successful"),
-                                    Err(err) => {
-                                        self.show_error(
-                                            "CSV export error".into(),
-                                            format!("{:?}", err),
-                                        );
-                                    }
+                self.export_file_dialog.update(ctx);
+
+                if let Some(filename) = self.export_file_dialog.take_selected() {
+                    match filename
+                        .extension()
+                        .map(|s| s.to_str().unwrap().to_ascii_lowercase())
+                    {
+                        Some(ext) if ext == "csv" => {
+                            log::info!("exporting CSV file to {:?}", filename);
+
+                            match export::write_csv(&filename, &self.signals, &self.samples) {
+                                Ok(_) => log::info!("export successful"),
+                                Err(err) => {
+                                    self.show_error(
+                                        "CSV export error".into(),
+                                        format!("{:?}", err),
+                                    );
                                 }
                             }
-                            Some(ext) if ext == "npy" => {
-                                log::info!("exporting NumPy file to {:?}", filename);
-                                match export::write_npy(&filename, &self.signals, &self.samples) {
-                                    Ok(_) => log::info!("export successful"),
-                                    Err(err) => {
-                                        self.show_error(
-                                            "NumPy export error".into(),
-                                            format!("{:?}", err),
-                                        );
-                                    }
-                                }
-                            }
-                            Some(ext) => {
-                                self.show_error(
-                                    "Unsupported export format".into(),
-                                    format!("Cannot export file with extension {ext:?}"),
-                                );
-                            }
-                            None => {} // operation was cancelled
                         }
+                        Some(ext) if ext == "npy" => {
+                            log::info!("exporting NumPy file to {:?}", filename);
+                            match export::write_npy(&filename, &self.signals, &self.samples) {
+                                Ok(_) => log::info!("export successful"),
+                                Err(err) => {
+                                    self.show_error(
+                                        "NumPy export error".into(),
+                                        format!("{:?}", err),
+                                    );
+                                }
+                            }
+                        }
+                        Some(ext) => {
+                            self.show_error(
+                                "Unsupported export format".into(),
+                                format!("Cannot export file with extension {ext:?}"),
+                            );
+                        }
+                        None => {} // operation was cancelled
                     }
                 }
 
@@ -617,6 +623,10 @@ impl eframe::App for OCDScope {
                             ui.text_edit_singleline(&mut self.gdb_address);
                         });
                         ui.horizontal(|ui| {
+                            if let Some(path) = self.elf_file_dialog.update(ctx).selected() {
+                                self.elf_filename = Some(path.to_path_buf());
+                            }
+
                             let elf_label_text = match &self.elf_filename {
                                 Some(path) => {
                                     path.file_name().unwrap().to_string_lossy().to_owned()
@@ -624,10 +634,9 @@ impl eframe::App for OCDScope {
                                 None => "<no ELF file>".into(),
                             };
                             ui.label(elf_label_text);
+
                             if ui.button("Open..").clicked() {
-                                self.elf_filename = rfd::FileDialog::new()
-                                    .add_filter("ELF executable (*.elf)", &["elf"])
-                                    .pick_file();
+                                self.elf_file_dialog.select_file();
                             }
                         });
                     }
