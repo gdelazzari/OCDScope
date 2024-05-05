@@ -12,7 +12,7 @@ egui-file-dialog = "0.5"
 
 elf = "0.7"
 log = "0.4"
-simple_logger = "4.3"
+simple_logger = "5.0"
 telnet = "0.2"
 thiserror = "1.0"
 npyz = "0.8"
