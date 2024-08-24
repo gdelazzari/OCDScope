@@ -5,10 +5,10 @@ edition = "2021"
 
 [dependencies]
 
-eframe = "0.27"
-ecolor = "0.27"
-egui_plot = "0.27"
-egui-file-dialog = "0.5"
+eframe = "0.28"
+ecolor = "0.28"
+egui_plot = "0.28"
+egui-file-dialog = "0.6"
 
 elf = "0.7"
 log = "0.4"

@@ -730,7 +730,7 @@ fn main() {
         options,
         Box::new(|_| {
             let app = OCDScope::new();
-            Box::new(app)
+            Ok(Box::new(app))
         }),
     )
     .expect("eframe::run_native error");
