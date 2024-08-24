@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
+use std::{collections::HashMap, sync::Arc};
 
 use eframe::egui;
 
@@ -99,7 +99,13 @@ impl OCDScope {
             max_time: 0,
             sampling_method: SamplingMethod::Simulated,
             gdb_address: "127.0.0.1:3333".into(),
-            elf_file_dialog: FileDialog::new().title("Select an ELF file"),
+            elf_file_dialog: FileDialog::new()
+                .title("Select an ELF file")
+                .add_file_filter(
+                    "ELF files (*.elf)",
+                    Arc::new(|path| path.extension().unwrap_or_default() == "elf"),
+                )
+                .default_file_filter("ELF files (*.elf)"),
             elf_filename: None,
             telnet_address: "127.0.0.1:4444".into(),
             sample_rate: 1000.0,
