@@ -113,7 +113,9 @@ impl OCDScope {
             rtt_relative_time: false,
             signals: Vec::new(),
             memory_address_to_add: 0xBEEF1010,
-            export_file_dialog: FileDialog::new().title("Save the exported file"),
+            export_file_dialog: FileDialog::new()
+                .title("Save the exported file")
+                .allow_file_overwrite(true),
         }
     }
 
@@ -259,7 +261,7 @@ impl eframe::App for OCDScope {
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             if self.any_dialog_visible() {
-                ui.set_enabled(false);
+                ui.disable();
             }
 
             ui.heading("OCDScope");
@@ -330,7 +332,7 @@ impl eframe::App for OCDScope {
 
                 self.export_file_dialog.update(ctx);
 
-                if let Some(filename) = self.export_file_dialog.take_selected() {
+                if let Some(filename) = self.export_file_dialog.take_picked() {
                     match filename
                         .extension()
                         .map(|s| s.to_str().unwrap().to_ascii_lowercase())
@@ -376,30 +378,30 @@ impl eframe::App for OCDScope {
                 reset_plot |= ui.button("Reset plot").clicked();
 
                 ui.checkbox(&mut self.plot_auto_follow, "Plot auto follow");
-                ui.horizontal(|ui| {
-                    ui.set_enabled(self.plot_auto_follow);
-
-                    ui.label("Show last ");
-                    ui.add(
-                        egui::DragValue::new(&mut self.plot_auto_follow_time)
-                            .clamp_range(1.0..=3600.0)
-                            .suffix(" s")
-                            .speed(0.1),
-                    );
+                ui.add_enabled_ui(self.plot_auto_follow, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Show last ");
+                        ui.add(
+                            egui::DragValue::new(&mut self.plot_auto_follow_time)
+                                .range(1.0..=3600.0)
+                                .suffix(" s")
+                                .speed(0.1),
+                        );
+                    })
                 });
 
                 ui.checkbox(&mut self.buffer_auto_truncate, "Buffer auto truncate");
-                ui.horizontal(|ui| {
-                    ui.set_enabled(self.buffer_auto_truncate);
-
-                    ui.label("Keep last ");
-                    ui.add(
-                        egui::DragValue::new(&mut self.buffer_auto_truncate_at)
-                            .clamp_range(1.0..=3600.0)
-                            .suffix(" s")
-                            .speed(0.1)
-                            .update_while_editing(false),
-                    );
+                ui.add_enabled_ui(self.buffer_auto_truncate, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Keep last ");
+                        ui.add(
+                            egui::DragValue::new(&mut self.buffer_auto_truncate_at)
+                                .range(1.0..=3600.0)
+                                .suffix(" s")
+                                .speed(0.1)
+                                .update_while_editing(false),
+                        );
+                    })
                 });
 
                 ui.separator();
@@ -572,7 +574,7 @@ impl eframe::App for OCDScope {
                         ui.add(
                             egui::DragValue::new(&mut self.memory_address_to_add)
                                 .hexadecimal(8, false, true)
-                                .clamp_range(0..=u32::MAX),
+                                .range(0..=u32::MAX),
                         )
                     });
 
@@ -629,7 +631,7 @@ impl eframe::App for OCDScope {
                             ui.text_edit_singleline(&mut self.gdb_address);
                         });
                         ui.horizontal(|ui| {
-                            if let Some(path) = self.elf_file_dialog.update(ctx).selected() {
+                            if let Some(path) = self.elf_file_dialog.update(ctx).picked() {
                                 self.elf_filename = Some(path.to_path_buf());
                             }
 
@@ -642,7 +644,7 @@ impl eframe::App for OCDScope {
                             ui.label(elf_label_text);
 
                             if ui.button("Open..").clicked() {
-                                self.elf_file_dialog.select_file();
+                                self.elf_file_dialog.pick_file();
                             }
                         });
                     }
@@ -654,7 +656,7 @@ impl eframe::App for OCDScope {
                             ui.label("Sampling rate [Hz]: ");
                             ui.add(
                                 egui::DragValue::new(&mut self.sample_rate)
-                                    .clamp_range(0.01..=1_000_000.0)
+                                    .range(0.01..=1_000_000.0)
                                     .max_decimals(12)
                                     .min_decimals(1),
                             );
@@ -664,8 +666,7 @@ impl eframe::App for OCDScope {
                         ui.horizontal(|ui| {
                             ui.label("Polling interval [ms]: ");
                             ui.add(
-                                egui::DragValue::new(&mut self.rtt_polling_interval)
-                                    .clamp_range(1..=100),
+                                egui::DragValue::new(&mut self.rtt_polling_interval).range(1..=100),
                             );
                         });
                         ui.checkbox(&mut self.rtt_relative_time, "Relative timestamp");
@@ -726,15 +727,19 @@ fn main() {
 
     let options = eframe::NativeOptions {
         viewport,
-        default_theme: eframe::Theme::Dark,
-        follow_system_theme: false,
         ..Default::default()
     };
 
     eframe::run_native(
         "ocdscope",
         options,
-        Box::new(|_| {
+        Box::new(|creation_context| {
+            let style = egui::Style {
+                visuals: egui::Visuals::dark(),
+                ..egui::Style::default()
+            };
+            creation_context.egui_ctx.set_style(style);
+
             let app = OCDScope::new();
             Ok(Box::new(app))
         }),
